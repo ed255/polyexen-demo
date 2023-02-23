@@ -7,9 +7,11 @@ Steps to run this:
 - 1. Clone these three repositories in the same folder:
     - https://github.com/ed255/halo2 (Make sure you're at `feature/wip-polyexen` branch)
     - https://github.com/ed255/zkevm-circuits (Make sure you're at `feature/wip-polyexen` branch)
+    - https://github.com/ed255/halo2wrong (Make sure you're at `feature/wip-polyexen` branch)
     - https://github.com/ed255/demo
     - https://github.com/Dhole/polyexen
 - 2. Enter the `demo` directory and run it:
+    - `mkdir -p out`
     - `cargo run`
 - 3. Build sqlite databases for fixed columns assignations:
     - `./build_sqlite.sh`

@@ -1,9 +1,9 @@
 use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
 use eth_types::{bytecode, geth_types::GethData, ToWord, Word};
-use halo2_proofs::{halo2curves::bn256::Fr, plonk::Circuit};
+use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr, plonk::Circuit};
 use mock::test_ctx::TestContext;
 use polyexen::ir::*;
-use zkevm_circuits::witness::block_convert;
+use zkevm_circuits::witness::{block_convert, Block};
 use zkevm_circuits::{
     bytecode_circuit::circuit::BytecodeCircuit, copy_circuit::CopyCircuit, evm_circuit::EvmCircuit,
     exp_circuit::ExpCircuit, keccak_circuit::keccak_packed_multi::KeccakCircuit,
@@ -28,7 +28,40 @@ fn write_files(name: &str, plaf: &Plaf) -> Result<(), io::Error> {
     Ok(())
 }
 
-fn gen_circuit_plaf<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32) {
+fn gen_small_block() -> Block<Fr> {
+    let bytecode = bytecode! {
+        PUSH32(0x1234)
+        PUSH32(0x5678)
+        ADD
+        STOP
+    };
+    let block: GethData = TestContext::<2, 1>::simple_ctx_with_bytecode(bytecode)
+        .unwrap()
+        .into();
+
+    let mut builder = BlockData::new_from_geth_data_with_params(
+        block.clone(),
+        CircuitsParams {
+            max_rws: 128,
+            max_txs: 1,
+            max_calldata: 64,
+            max_copy_rows: 128,
+            max_bytecode: 32,
+            keccak_padding: Some(128),
+        },
+    )
+    .new_circuit_input_builder();
+    builder
+        .handle_block(&block.eth_block, &block.geth_traces)
+        .unwrap();
+    let mut block = block_convert(&builder.block, &builder.code_db).unwrap();
+    // TODO: Remove once these parameters are moved to CircuitsParams
+    block.evm_circuit_pad_to = 128;
+    block.exp_circuit_pad_to = 128;
+    block
+}
+
+fn gen_empty_block() -> Block<Fr> {
     let block: GethData = TestContext::<0, 0>::new(None, |_| {}, |_, _| {}, |b, _| b)
         .unwrap()
         .into();
@@ -49,26 +82,49 @@ fn gen_circuit_plaf<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32) {
         .handle_block(&block.eth_block, &block.geth_traces)
         .unwrap();
     let mut block = block_convert(&builder.block, &builder.code_db).unwrap();
-    // TODO: Remove once these parameters are moved to CIrcuitsParams
+    // TODO: Remove once these parameters are moved to CircuitsParams
     block.evm_circuit_pad_to = 128;
     block.exp_circuit_pad_to = 128;
+    block
+}
 
+fn gen_circuit_plaf<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32, block: &Block<Fr>) {
     let circuit = C::new_from_block(&block);
     let mut plaf = gen_plaf(k, &circuit).unwrap();
     name_challanges(&mut plaf);
     write_files(name, &plaf).unwrap();
 }
 
+fn circuit_plaf_mock_prover<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32) {
+    let block = gen_small_block();
+
+    let circuit = C::new_from_block(&block);
+    let mut plaf = gen_plaf(k, &circuit).unwrap();
+    name_challanges(&mut plaf);
+    write_files(name, &plaf).unwrap();
+    let instance = circuit.instance();
+    let challenges = vec![Fr::from(0x100), Fr::from(0x100), Fr::from(0x100)];
+    let wit = get_witness(k, &circuit, &plaf, challenges, instance.clone()).unwrap();
+
+    let plaf_circuit = PlafH2Circuit { plaf, wit };
+
+    let mock_prover = MockProver::<Fr>::run(k, &plaf_circuit, instance).unwrap();
+    mock_prover.assert_satisfied_par();
+}
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    gen_circuit_plaf::<EvmCircuit<Fr>>("evm", 18);
-    gen_circuit_plaf::<StateCircuit<Fr>>("state", 17);
-    gen_circuit_plaf::<TxCircuit<Fr>>("tx", 19);
-    gen_circuit_plaf::<BytecodeCircuit<Fr>>("bytecode", 9);
-    gen_circuit_plaf::<CopyCircuit<Fr>>("copy", 9);
-    gen_circuit_plaf::<KeccakCircuit<Fr>>("keccak", 11);
-    gen_circuit_plaf::<ExpCircuit<Fr>>("exp", 9);
-    gen_circuit_plaf::<PiCircuit<Fr, 1, 64>>("pi", 17);
-    // gen_circuit_plaf::<SuperCircuit<Fr, 1, 64, 0x100>>("super", 19);
+    // let block = gen_empty_block();
+    // gen_circuit_plaf::<EvmCircuit<Fr>>("evm", 18, &block);
+    // gen_circuit_plaf::<StateCircuit<Fr>>("state", 17, &block);
+    // gen_circuit_plaf::<TxCircuit<Fr>>("tx", 19, &block);
+    // gen_circuit_plaf::<BytecodeCircuit<Fr>>("bytecode", 9, &block);
+    // gen_circuit_plaf::<CopyCircuit<Fr>>("copy", 9, &block);
+    // gen_circuit_plaf::<KeccakCircuit<Fr>>("keccak", 11, &block);
+    // gen_circuit_plaf::<ExpCircuit<Fr>>("exp", 9, &block);
+    // gen_circuit_plaf::<PiCircuit<Fr, 1, 64>>("pi", 17, &block);
+    // gen_circuit_plaf::<SuperCircuit<Fr, 1, 64, 0x100>>("super", 19, &block);
+
+    circuit_plaf_mock_prover::<BytecodeCircuit<Fr>>("bytecode", 9);
 }

@@ -17,5 +17,8 @@ env_logger = "0.9"
 [patch."https://github.com/privacy-scaling-explorations/halo2.git"]
 halo2_proofs = { path = "../halo2/halo2_proofs" }
 
+[patch."https://github.com/privacy-scaling-explorations/halo2wrong.git"]
+halo2wrong = { path = "../halo2wrong/halo2wrong" }
+
 [patch.crates-io]
 halo2_proofs = { path = "../halo2/halo2_proofs" }
