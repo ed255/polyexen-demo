@@ -6,9 +6,9 @@ use polyexen::ir::*;
 use zkevm_circuits::witness::{block_convert, Block};
 use zkevm_circuits::{
     bytecode_circuit::circuit::BytecodeCircuit, copy_circuit::CopyCircuit, evm_circuit::EvmCircuit,
-    exp_circuit::ExpCircuit, keccak_circuit::keccak_packed_multi::KeccakCircuit,
-    pi_circuit::PiTestCircuit as PiCircuit, state_circuit::StateCircuit,
-    super_circuit::SuperCircuit, tx_circuit::TxCircuit, util::SubCircuit,
+    exp_circuit::ExpCircuit, keccak_circuit::KeccakCircuit, pi_circuit::PiTestCircuit as PiCircuit,
+    state_circuit::StateCircuit, super_circuit::SuperCircuit, tx_circuit::TxCircuit,
+    util::SubCircuit,
 };
 
 use std::fs::File;
@@ -47,17 +47,16 @@ fn gen_small_block() -> Block<Fr> {
             max_calldata: 64,
             max_copy_rows: 128,
             max_bytecode: 32,
-            keccak_padding: Some(128),
+            max_keccak_rows: 128,
+            max_evm_rows: 128,
+            max_exp_steps: 128,
         },
     )
     .new_circuit_input_builder();
     builder
         .handle_block(&block.eth_block, &block.geth_traces)
         .unwrap();
-    let mut block = block_convert(&builder.block, &builder.code_db).unwrap();
-    // TODO: Remove once these parameters are moved to CircuitsParams
-    block.evm_circuit_pad_to = 128;
-    block.exp_circuit_pad_to = 128;
+    let block = block_convert(&builder.block, &builder.code_db).unwrap();
     block
 }
 
@@ -74,17 +73,16 @@ fn gen_empty_block() -> Block<Fr> {
             max_calldata: 64,
             max_copy_rows: 128,
             max_bytecode: 128,
-            keccak_padding: Some(1024),
+            max_keccak_rows: 1024,
+            max_evm_rows: 128,
+            max_exp_steps: 128,
         },
     )
     .new_circuit_input_builder();
     builder
         .handle_block(&block.eth_block, &block.geth_traces)
         .unwrap();
-    let mut block = block_convert(&builder.block, &builder.code_db).unwrap();
-    // TODO: Remove once these parameters are moved to CircuitsParams
-    block.evm_circuit_pad_to = 128;
-    block.exp_circuit_pad_to = 128;
+    let block = block_convert(&builder.block, &builder.code_db).unwrap();
     block
 }
 
