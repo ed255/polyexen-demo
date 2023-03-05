@@ -2,17 +2,29 @@ use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
 use eth_types::{bytecode, geth_types::GethData, ToWord, Word};
 use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr, plonk::Circuit};
 use mock::test_ctx::TestContext;
-use polyexen::ir::*;
-use zkevm_circuits::witness::{block_convert, Block};
+use polyexen::plaf::{
+    backends::halo2::PlafH2Circuit,
+    frontends::halo2::{gen_witness, get_plaf},
+    Plaf, PlafDisplayBaseTOML, PlafDisplayFixedCSV,
+};
 use zkevm_circuits::{
-    bytecode_circuit::circuit::BytecodeCircuit, copy_circuit::CopyCircuit, evm_circuit::EvmCircuit,
-    exp_circuit::ExpCircuit, keccak_circuit::KeccakCircuit, pi_circuit::PiTestCircuit as PiCircuit,
-    state_circuit::StateCircuit, super_circuit::SuperCircuit, tx_circuit::TxCircuit,
+    bytecode_circuit::circuit::BytecodeCircuit,
+    copy_circuit::CopyCircuit,
+    evm_circuit::EvmCircuit,
+    exp_circuit::ExpCircuit,
+    keccak_circuit::KeccakCircuit,
+    pi_circuit::PiTestCircuit as PiCircuit,
+    state_circuit::StateCircuit,
+    super_circuit::SuperCircuit,
+    tx_circuit::TxCircuit,
     util::SubCircuit,
+    witness::{block_convert, Block},
 };
 
-use std::fs::File;
-use std::io::{self, Write};
+use std::{
+    fs::File,
+    io::{self, Write},
+};
 
 fn name_challanges(plaf: &mut Plaf) {
     plaf.set_challange_alias(0, "r_word".to_string());
@@ -88,7 +100,7 @@ fn gen_empty_block() -> Block<Fr> {
 
 fn gen_circuit_plaf<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32, block: &Block<Fr>) {
     let circuit = C::new_from_block(&block);
-    let mut plaf = gen_plaf(k, &circuit).unwrap();
+    let mut plaf = get_plaf(k, &circuit).unwrap();
     name_challanges(&mut plaf);
     write_files(name, &plaf).unwrap();
 }
@@ -97,12 +109,12 @@ fn circuit_plaf_mock_prover<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32)
     let block = gen_small_block();
 
     let circuit = C::new_from_block(&block);
-    let mut plaf = gen_plaf(k, &circuit).unwrap();
+    let mut plaf = get_plaf(k, &circuit).unwrap();
     name_challanges(&mut plaf);
     write_files(name, &plaf).unwrap();
     let instance = circuit.instance();
     let challenges = vec![Fr::from(0x100), Fr::from(0x100), Fr::from(0x100)];
-    let wit = get_witness(k, &circuit, &plaf, challenges, instance.clone()).unwrap();
+    let wit = gen_witness(k, &circuit, &plaf, challenges, instance.clone()).unwrap();
 
     let plaf_circuit = PlafH2Circuit { plaf, wit };
 
