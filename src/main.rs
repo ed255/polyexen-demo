@@ -2,10 +2,14 @@ use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
 use eth_types::{bytecode, geth_types::GethData, ToWord, Word};
 use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr, plonk::Circuit};
 use mock::test_ctx::TestContext;
-use polyexen::plaf::{
-    backends::halo2::PlafH2Circuit,
-    frontends::halo2::{gen_witness, get_plaf},
-    Plaf, PlafDisplayBaseTOML, PlafDisplayFixedCSV,
+use num_bigint::BigUint;
+use polyexen::{
+    analyze::{find_bounds_poly, Analysis},
+    plaf::{
+        backends::halo2::PlafH2Circuit,
+        frontends::halo2::{gen_witness, get_plaf},
+        Plaf, PlafDisplayBaseTOML, PlafDisplayFixedCSV, VarDisplay,
+    },
 };
 use zkevm_circuits::{
     bytecode_circuit::circuit::BytecodeCircuit,
@@ -122,19 +126,50 @@ fn circuit_plaf_mock_prover<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32)
     mock_prover.assert_satisfied_par();
 }
 
+fn demo_get_plaf() {
+    let block = gen_empty_block();
+    gen_circuit_plaf::<EvmCircuit<Fr>>("evm", 18, &block);
+    gen_circuit_plaf::<StateCircuit<Fr>>("state", 17, &block);
+    gen_circuit_plaf::<TxCircuit<Fr>>("tx", 19, &block);
+    gen_circuit_plaf::<BytecodeCircuit<Fr>>("bytecode", 9, &block);
+    gen_circuit_plaf::<CopyCircuit<Fr>>("copy", 9, &block);
+    gen_circuit_plaf::<KeccakCircuit<Fr>>("keccak", 11, &block);
+    gen_circuit_plaf::<ExpCircuit<Fr>>("exp", 10, &block);
+    gen_circuit_plaf::<PiCircuit<Fr, 1, 64>>("pi", 17, &block);
+    gen_circuit_plaf::<SuperCircuit<Fr, 1, 64, 0x100>>("super", 19, &block);
+}
+
+fn demo_analysis() {
+    let block = gen_empty_block();
+    let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
+    let k = 9;
+    let mut plaf = get_plaf(k, &circuit).unwrap();
+    name_challanges(&mut plaf);
+
+    let p = BigUint::parse_bytes(b"100000000000000000000000000000000", 16).unwrap()
+        - BigUint::from(159u64);
+    let mut analysis = Analysis::new();
+    for poly in &plaf.polys {
+        find_bounds_poly(&poly.exp, &p, &mut analysis);
+    }
+    for (var, attrs) in &analysis.vars_attrs {
+        println!(
+            "{}",
+            VarDisplay {
+                v: var,
+                plaf: &plaf
+            }
+        );
+        println!("  {:?}", attrs.bound);
+    }
+}
+
+fn demo_plaf_halo2() {
+    circuit_plaf_mock_prover::<BytecodeCircuit<Fr>>("bytecode", 9);
+}
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    // let block = gen_empty_block();
-    // gen_circuit_plaf::<EvmCircuit<Fr>>("evm", 18, &block);
-    // gen_circuit_plaf::<StateCircuit<Fr>>("state", 17, &block);
-    // gen_circuit_plaf::<TxCircuit<Fr>>("tx", 19, &block);
-    // gen_circuit_plaf::<BytecodeCircuit<Fr>>("bytecode", 9, &block);
-    // gen_circuit_plaf::<CopyCircuit<Fr>>("copy", 9, &block);
-    // gen_circuit_plaf::<KeccakCircuit<Fr>>("keccak", 11, &block);
-    // gen_circuit_plaf::<ExpCircuit<Fr>>("exp", 9, &block);
-    // gen_circuit_plaf::<PiCircuit<Fr, 1, 64>>("pi", 17, &block);
-    // gen_circuit_plaf::<SuperCircuit<Fr, 1, 64, 0x100>>("super", 19, &block);
-
-    circuit_plaf_mock_prover::<BytecodeCircuit<Fr>>("bytecode", 9);
+    demo_analysis();
 }

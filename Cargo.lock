@@ -572,6 +572,7 @@ dependencies = [
  "eth-types",
  "halo2_proofs 0.2.0",
  "mock",
+ "num-bigint",
  "polyexen",
  "zkevm-circuits",
 ]
