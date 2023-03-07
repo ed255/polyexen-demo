@@ -4,13 +4,15 @@ use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr, plonk::Circuit};
 use mock::test_ctx::TestContext;
 use num_bigint::BigUint;
 use polyexen::{
-    analyze::{find_bounds_poly, Analysis},
+    analyze::{bound_base, find_bounds_poly, Analysis},
+    expr::ExprDisplay,
     plaf::{
         backends::halo2::PlafH2Circuit,
         frontends::halo2::{gen_witness, get_plaf},
-        Plaf, PlafDisplayBaseTOML, PlafDisplayFixedCSV, VarDisplay,
+        Cell, CellDisplay, Plaf, PlafDisplayBaseTOML, PlafDisplayFixedCSV, VarDisplay,
     },
 };
+use std::fmt;
 use zkevm_circuits::{
     bytecode_circuit::circuit::BytecodeCircuit,
     copy_circuit::CopyCircuit,
@@ -149,14 +151,32 @@ fn demo_analysis() {
     let p = BigUint::parse_bytes(b"100000000000000000000000000000000", 16).unwrap()
         - BigUint::from(159u64);
     let mut analysis = Analysis::new();
-    for poly in &plaf.polys {
-        find_bounds_poly(&poly.exp, &p, &mut analysis);
+    let cell_fmt =
+        |f: &mut fmt::Formatter<'_>, c: &Cell| write!(f, "{}", CellDisplay { c, plaf: &plaf });
+    for offset in 0..plaf.info.num_rows {
+        for poly in &plaf.polys {
+            let exp = plaf.resolve(&poly.exp, offset);
+            let exp = exp.simplify(&p);
+            println!(
+                "\"{}\" {}",
+                poly.name,
+                ExprDisplay {
+                    e: &exp,
+                    var_fmt: cell_fmt
+                }
+            );
+            find_bounds_poly(&exp, &p, &mut analysis);
+        }
     }
-    for (var, attrs) in &analysis.vars_attrs {
+    let bound_base = bound_base(&p);
+    for (cell, attrs) in &analysis.vars_attrs {
+        if attrs.bound == bound_base {
+            continue;
+        }
         println!(
             "{}",
-            VarDisplay {
-                v: var,
+            CellDisplay {
+                c: cell,
                 plaf: &plaf
             }
         );
