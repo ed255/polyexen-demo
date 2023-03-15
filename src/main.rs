@@ -146,6 +146,7 @@ fn demo_analysis() {
     let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
     let k = 9;
     let mut plaf = get_plaf(k, &circuit).unwrap();
+    plaf.simplify();
     name_challanges(&mut plaf);
 
     let p = BigUint::parse_bytes(b"100000000000000000000000000000000", 16).unwrap()
@@ -155,8 +156,11 @@ fn demo_analysis() {
         |f: &mut fmt::Formatter<'_>, c: &Cell| write!(f, "{}", CellDisplay { c, plaf: &plaf });
     for offset in 0..plaf.info.num_rows {
         for poly in &plaf.polys {
-            let exp = plaf.resolve(&poly.exp, offset);
-            let exp = exp.simplify(&p);
+            let mut exp = plaf.resolve(&poly.exp, offset);
+            exp.simplify(&p);
+            if exp.is_zero() {
+                continue;
+            }
             println!(
                 "\"{}\" {}",
                 poly.name,
@@ -191,5 +195,6 @@ fn demo_plaf_halo2() {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    demo_analysis();
+    // demo_analysis();
+    demo_get_plaf();
 }
