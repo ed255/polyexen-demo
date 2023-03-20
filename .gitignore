@@ -2,3 +2,5 @@
 out/*.csv
 out/*.toml
 out/*.sqlite
+history.txt
+out.tgz

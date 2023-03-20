@@ -32,11 +32,7 @@ use std::{
     io::{self, Write},
 };
 
-fn name_challanges(plaf: &mut Plaf) {
-    plaf.set_challange_alias(0, "r_word".to_string());
-    plaf.set_challange_alias(1, "r_keccak".to_string());
-    plaf.set_challange_alias(2, "r_evm_lookup".to_string());
-}
+use crate::{gen_empty_block, name_challanges};
 
 fn write_files(name: &str, plaf: &Plaf) -> Result<(), io::Error> {
     let mut base_file = File::create(format!("out/{}.toml", name))?;
@@ -66,32 +62,6 @@ fn gen_small_block() -> Block<Fr> {
             max_copy_rows: 128,
             max_bytecode: 32,
             max_keccak_rows: 128,
-            max_evm_rows: 128,
-            max_exp_steps: 128,
-        },
-    )
-    .new_circuit_input_builder();
-    builder
-        .handle_block(&block.eth_block, &block.geth_traces)
-        .unwrap();
-    let block = block_convert(&builder.block, &builder.code_db).unwrap();
-    block
-}
-
-fn gen_empty_block() -> Block<Fr> {
-    let block: GethData = TestContext::<0, 0>::new(None, |_| {}, |_, _| {}, |b, _| b)
-        .unwrap()
-        .into();
-
-    let mut builder = BlockData::new_from_geth_data_with_params(
-        block.clone(),
-        CircuitsParams {
-            max_rws: 128,
-            max_txs: 1,
-            max_calldata: 64,
-            max_copy_rows: 128,
-            max_bytecode: 128,
-            max_keccak_rows: 1024,
             max_evm_rows: 128,
             max_exp_steps: 128,
         },
@@ -195,6 +165,5 @@ fn demo_plaf_halo2() {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    // demo_analysis();
-    demo_get_plaf();
+    demo_analysis();
 }
