@@ -1,0 +1,6 @@
+s base_limb[14] 2
+s base_limb[15] 0
+s base_limb[16] 0
+s base_limb[17] 0
+s exponent_lo_hi[14] 3
+s exponent_lo_hi[15] 0

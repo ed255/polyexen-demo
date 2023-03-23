@@ -17,10 +17,10 @@ pub fn gen_empty_block() -> Block<Fr> {
             max_txs: 1,
             max_calldata: 64,
             max_copy_rows: 128,
-            max_bytecode: 20,
+            max_bytecode: 32,
             max_keccak_rows: 1024,
             max_evm_rows: 128,
-            max_exp_steps: 128,
+            max_exp_steps: 32,
         },
     )
     .new_circuit_input_builder();

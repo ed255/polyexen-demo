@@ -10,13 +10,15 @@ use rustyline::{error::ReadlineError, DefaultEditor, Result};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    fmt,
+    env, fmt,
+    fs::File,
+    io::{self, BufRead, BufReader},
 };
 use zkevm_circuits::{
-    bytecode_circuit::circuit::BytecodeCircuit,
+    // bytecode_circuit::circuit::BytecodeCircuit,
     // copy_circuit::CopyCircuit,
     // evm_circuit::EvmCircuit,
-    // exp_circuit::ExpCircuit,
+    exp_circuit::ExpCircuit,
     // keccak_circuit::KeccakCircuit,
     // pi_circuit::PiTestCircuit as PiCircuit,
     // state_circuit::StateCircuit,
@@ -24,6 +26,8 @@ use zkevm_circuits::{
     // tx_circuit::TxCircuit,
     util::SubCircuit,
 };
+
+const N_ROWS: usize = 32;
 
 use demo::{gen_empty_block, name_challanges};
 
@@ -207,7 +211,15 @@ fn alias_replace(plaf: &mut Plaf) {
         .chain(plaf.columns.witness.iter_mut().map(|c| &mut c.aliases))
     {
         for alias in aliases.iter_mut() {
-            *alias = alias.replace("BYTECODE_", "");
+            // Bytecode
+            // *alias = alias.replace("BYTECODE_", "");
+
+            // Exp
+            *alias = alias.replace("EXP_", "");
+            *alias = alias.replace("GADGET_MUL_ADD", "MulAdd");
+            *alias = alias.replace("_col", "_c");
+            *alias = alias.replace("identifier", "id");
+            *alias = alias.replace("parity_check", "parChe");
         }
     }
 }
@@ -216,7 +228,8 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let block = gen_empty_block();
-    let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
+    // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
+    let circuit = ExpCircuit::<Fr>::new_from_block(&block);
     let k = 9;
     let mut plaf = get_plaf(k, &circuit).unwrap();
     alias_replace(&mut plaf);
@@ -241,6 +254,16 @@ fn main() {
     if rl.load_history("history.txt").is_err() {
         println!("No previous history.");
     }
+
+    let args: Vec<String> = env::args().collect();
+    if args.len() == 2 {
+        let filename = &args[1];
+        let file = File::open(filename).unwrap();
+        for line in io::BufReader::new(file).lines() {
+            run(&mut ctx, line.unwrap().as_str());
+        }
+    }
+
     loop {
         let readline = rl.readline(">> ");
         match readline {
@@ -351,7 +374,7 @@ fn print_table(ctx: &Context, offset_str: &str) {
         column_names.push(column.name().clone());
     }
     let mut table = DisplayTable::new(column_names.into());
-    for row in offset..offset + 16 {
+    for row in offset..offset + N_ROWS {
         let mut row_values = Vec::new();
         row_values.push(Some(format!("{}", row)));
         for index in 0..ctx.plaf.columns.fixed.len() {
