@@ -2,9 +2,9 @@ use halo2_proofs::halo2curves::bn256::Fr;
 use num_bigint::BigUint;
 use num_traits::Zero;
 use polyexen::{
-    analyze::{bound_base, find_bounds_poly, Analysis, Bound},
-    expr::{Column, ColumnKind, Expr, ExprDisplay, PlonkVar as Var},
-    plaf::{frontends::halo2::get_plaf, AliasMap, Cell, CellDisplay, Plaf, Witness},
+    analyze::{bound_base, find_bounds_poly, solve_ranged_linear_comb, Analysis, Attrs, Bound},
+    expr::{Column, ColumnKind, ColumnQuery, Expr, ExprDisplay, PlonkVar as Var},
+    plaf::{frontends::halo2::get_plaf, AliasMap, Cell, CellDisplay, Lookup, Plaf, Witness},
 };
 use rustyline::{error::ReadlineError, DefaultEditor, Result};
 use std::{
@@ -15,10 +15,12 @@ use std::{
     io::{self, BufRead, BufReader},
 };
 use zkevm_circuits::{
-    // bytecode_circuit::circuit::BytecodeCircuit,
+    bytecode_circuit::circuit::BytecodeCircuit,
+    evm_circuit::util::math_gadget::add_words::tests::AddWordsTestContainer,
+    evm_circuit::util::math_gadget::test_util::UnitTestMathGadgetBaseCircuit,
     // copy_circuit::CopyCircuit,
     // evm_circuit::EvmCircuit,
-    exp_circuit::ExpCircuit,
+    // exp_circuit::ExpCircuit,
     // keccak_circuit::KeccakCircuit,
     // pi_circuit::PiTestCircuit as PiCircuit,
     // state_circuit::StateCircuit,
@@ -27,7 +29,7 @@ use zkevm_circuits::{
     util::SubCircuit,
 };
 
-const N_ROWS: usize = 32;
+const N_ROWS: usize = 20;
 
 use demo::{gen_empty_block, name_challanges};
 
@@ -39,6 +41,16 @@ struct PolyRef {
     index: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct LookupSrcRef {
+    /// Row offset
+    offset: usize,
+    /// Index in Plaf.lookups
+    index: usize,
+    /// Expr Index
+    expr_index: usize,
+}
+
 impl PolyRef {
     fn get<'a>(&self, plaf: &'a Plaf) -> (usize, &'a Expr<Var>) {
         (self.offset, &plaf.polys[self.index].exp)
@@ -48,7 +60,10 @@ impl PolyRef {
 struct Context {
     plaf: Plaf,
     alias_map: AliasMap,
+    // Map from Cell to Polynomial identity that uses that cell
     cell_expr_map: HashMap<Cell, Vec<PolyRef>>,
+    // Map from Cell to lookup src expression that uses that cell
+    cell_lookup_src_map: HashMap<Cell, Vec<LookupSrcRef>>,
     analysis: RefCell<Analysis<Cell>>,
     witness: Witness,
     bound_default: Bound,
@@ -65,12 +80,13 @@ impl Context {
             plaf,
             alias_map,
             cell_expr_map: HashMap::new(),
+            cell_lookup_src_map: HashMap::new(),
             analysis: RefCell::new(analysis),
             witness,
             bound_default,
         };
-        let cell_expr_map = ctx.cell_expr_map();
-        ctx.cell_expr_map = cell_expr_map;
+        ctx.cell_expr_map = ctx.cell_expr_map();
+        ctx.cell_lookup_src_map = ctx.cell_lookup_src_map();
         ctx.analyze_all();
         ctx
     }
@@ -95,7 +111,7 @@ impl Context {
 
     fn resolve_var<const WITNESS: bool>(&self, v: &Var, offset: usize) -> Expr<Cell> {
         match v {
-            Var::ColumnQuery { column, rotation } => {
+            Var::Query(ColumnQuery { column, rotation }) => {
                 let offset =
                     (offset as i32 + rotation).rem_euclid(self.plaf.info.num_rows as i32) as usize;
                 match column.kind {
@@ -151,6 +167,29 @@ impl Context {
         map
     }
 
+    fn cell_lookup_src_map(&self) -> HashMap<Cell, Vec<LookupSrcRef>> {
+        let mut map = HashMap::new();
+        for offset in 0..self.plaf.info.num_rows {
+            for (index, lookup) in self.plaf.lookups.iter().enumerate() {
+                for (expr_index, expr) in lookup.exps.0.iter().enumerate() {
+                    let exp = self.eval_partial(&expr, offset);
+                    let vars = exp.vars();
+                    let lookup_ref = LookupSrcRef {
+                        offset,
+                        index,
+                        expr_index,
+                    };
+                    for var in vars {
+                        map.entry(var)
+                            .and_modify(|ps: &mut Vec<LookupSrcRef>| ps.push(lookup_ref))
+                            .or_insert(vec![lookup_ref]);
+                    }
+                }
+            }
+        }
+        map
+    }
+
     fn eval_partial(&self, exp: &Expr<Var>, offset: usize) -> Expr<Cell> {
         let p = &self.plaf.info.p;
         let mut exp = self
@@ -171,9 +210,15 @@ impl Context {
             println!("Warning: Poly constraint not satisfied");
         }
         let update1 = find_bounds_poly(&exp, p, &mut *self.analysis.borrow_mut());
+        let update2 = solve_ranged_linear_comb(&exp, p, &mut *self.analysis.borrow_mut());
         exp.normalize(p);
-        let update2 = find_bounds_poly(&exp, p, &mut *self.analysis.borrow_mut());
-        update1.iter().chain(update2.iter()).cloned().collect()
+        let update3 = find_bounds_poly(&exp, p, &mut *self.analysis.borrow_mut());
+        update1
+            .iter()
+            .chain(update2.iter())
+            .chain(update3.iter())
+            .cloned()
+            .collect()
     }
 
     fn analyze(&mut self, mut set: HashSet<Cell>) {
@@ -181,13 +226,81 @@ impl Context {
             // println!("DBG Analyze set {:?}", set);
             let mut new_set = HashSet::new();
             for cell in &set {
-                for poly_ref in self.cell_expr_map.get(cell).unwrap() {
-                    let (offset, exp) = poly_ref.get(&self.plaf);
-                    new_set.extend(self.analyze_poly(offset, exp).into_iter());
+                if let Some(poly_refs) = self.cell_expr_map.get(cell) {
+                    for poly_ref in poly_refs {
+                        let (offset, exp) = poly_ref.get(&self.plaf);
+                        new_set.extend(self.analyze_poly(offset, exp).into_iter());
+                    }
                 }
             }
             // println!("DBG3 {}", self.analysis.borrow().vars_attrs.len());
             set = new_set;
+        }
+    }
+
+    fn analyze_lookups(&self, lookup: &Lookup) {
+        // Only analyze lookups to fixed columns
+        let num_rows = self.plaf.info.num_rows;
+        let num_exps = lookup.exps.1.len();
+        let mut dst_table = vec![vec![BigUint::zero(); num_rows]; num_exps];
+        for offset in 0..num_rows {
+            for (exp_index, exp) in lookup
+                .exps
+                .1
+                .iter()
+                .map(|e| self.eval_partial(e, offset))
+                .enumerate()
+            {
+                if let Expr::Const(f) = exp {
+                    dst_table[exp_index][offset] = f.clone();
+                } else {
+                    return;
+                }
+            }
+        }
+        for offset in 0..num_rows {
+            let mut match_rows = vec![true; num_rows];
+            for (exp_index, exp) in lookup
+                .exps
+                .0
+                .iter()
+                .map(|e| self.eval_partial(e, offset))
+                .enumerate()
+            {
+                let mut col_match_rows = vec![false; num_rows];
+                if let Some(src_bound) = self.analysis.borrow().bound_exp(&exp) {
+                    for dst_offset in 0..num_rows {
+                        if src_bound
+                            .overlap(&Bound::new_unique(dst_table[exp_index][dst_offset].clone()))
+                        {
+                            col_match_rows[dst_offset] = true;
+                        }
+                    }
+                } else {
+                    return;
+                }
+                for (match_row, col_match_row) in match_rows.iter_mut().zip(col_match_rows) {
+                    *match_row &= col_match_row;
+                }
+            }
+            let match_rows: Vec<usize> = match_rows
+                .iter()
+                .enumerate()
+                .filter_map(|(row, matches)| if *matches { Some(row) } else { None })
+                .collect();
+            for exp_index in 0..num_exps {
+                let exp_bound = Bound::new(
+                    match_rows
+                        .iter()
+                        .map(|row| dst_table[exp_index][*row].clone()),
+                );
+                if let Expr::Var(cell) = self.eval_partial(&lookup.exps.0[exp_index], offset) {
+                    self.analysis
+                        .borrow_mut()
+                        .vars_attrs
+                        .insert(cell, Attrs { bound: exp_bound });
+                }
+            }
         }
     }
 
@@ -196,6 +309,9 @@ impl Context {
             for poly in &self.plaf.polys {
                 self.analyze_poly(offset, &poly.exp);
             }
+        }
+        for lookup in &self.plaf.lookups {
+            self.analyze_lookups(lookup);
         }
         // println!("DBG2 {}", self.analysis.borrow().vars_attrs.len());
     }
@@ -227,10 +343,15 @@ fn alias_replace(plaf: &mut Plaf) {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let block = gen_empty_block();
+    // let block = gen_empty_block();
     // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
-    let circuit = ExpCircuit::<Fr>::new_from_block(&block);
-    let k = 9;
+    // let circuit = ExpCircuit::<Fr>::new_from_block(&block);
+    let k: u32 = 12;
+    use eth_types::Word;
+    let witnesses: Vec<Word> = vec![Word::from(0), Word::from(0), Word::from(0)];
+    let circuit = UnitTestMathGadgetBaseCircuit::<AddWordsTestContainer<Fr, 2, 0u64, true>>::new(
+        k as usize, witnesses,
+    );
     let mut plaf = get_plaf(k, &circuit).unwrap();
     alias_replace(&mut plaf);
     plaf.simplify();
@@ -337,21 +458,83 @@ impl DisplayTable {
     }
 }
 
+fn print_lookups(ctx: &Context, offset_str: &str) {
+    let offset = usize::from_str_radix(offset_str, 10).unwrap();
+    let p = &ctx.plaf.info.p;
+
+    for lookup in &ctx.plaf.lookups {
+        println!("\"{}\"", lookup.name);
+        print!("ori0 src: {{");
+        for (i, exp) in lookup.exps.0.iter().enumerate() {
+            if i != 0 {
+                print!(", ");
+            }
+            print!(
+                "{}",
+                ExprDisplay {
+                    e: &exp,
+                    var_fmt: |f, v| ctx.plaf.fmt_var(f, v)
+                }
+            );
+        }
+        println!("}}");
+        print!("ori0 dst: {{");
+        for (i, exp) in lookup.exps.1.iter().enumerate() {
+            if i != 0 {
+                print!(", ");
+            }
+            print!(
+                "{}",
+                ExprDisplay {
+                    e: &exp,
+                    var_fmt: |f, v| ctx.plaf.fmt_var(f, v)
+                }
+            );
+        }
+        println!("}}");
+    }
+}
+
 fn print_polys(ctx: &Context, offset_str: &str) {
     let offset = usize::from_str_radix(offset_str, 10).unwrap();
     let p = &ctx.plaf.info.p;
     let cell_fmt =
         |f: &mut fmt::Formatter<'_>, c: &Cell| write!(f, "{}", CellDisplay { c, plaf: &ctx.plaf });
+    let mut query_names: HashMap<ColumnQuery, String> = HashMap::new();
+    for (selector, map) in &ctx.plaf.metadata.query_names {
+        let s = ctx.eval_partial(selector, offset);
+        if s.is_const_not_zero() {
+            query_names.extend(map.clone().into_iter());
+        }
+    }
     for poly in &ctx.plaf.polys {
-        let mut exp = ctx.eval_partial(&poly.exp, offset);
-        exp.normalize(p);
+        let exp = ctx.eval_partial(&poly.exp, offset);
+        // exp.normalize(p);
+        println!("\"{}\"", poly.name);
         println!(
-            "\"{}\"\n  ori: {}\n  res: {}",
-            poly.name,
+            "  ori0: {}",
             ExprDisplay {
                 e: &poly.exp,
                 var_fmt: |f, v| ctx.plaf.fmt_var(f, v)
             },
+        );
+        println!(
+            "  ori1: {}",
+            ExprDisplay {
+                e: &poly.exp,
+                var_fmt: |f, v| {
+                    if let Var::Query(q) = v {
+                        if let Some(name) = query_names.get(&q) {
+                            write!(f, "{}", name)?;
+                            return Ok(());
+                        }
+                    }
+                    ctx.plaf.fmt_var(f, &v)
+                }
+            }
+        );
+        println!(
+            "  res: {}",
             ExprDisplay {
                 e: &exp,
                 var_fmt: cell_fmt
@@ -374,11 +557,56 @@ fn print_table(ctx: &Context, offset_str: &str) {
         column_names.push(column.name().clone());
     }
     let mut table = DisplayTable::new(column_names.into());
+    // Query names in matrix [column_index][row]
+    let mut query_names_fixed = vec![vec![String::new(); N_ROWS]; ctx.plaf.columns.fixed.len()];
+    let mut query_names_witness = vec![vec![String::new(); N_ROWS]; ctx.plaf.columns.witness.len()];
+    for row in offset.saturating_sub(N_ROWS)..offset + N_ROWS {
+        for (selector, map) in &ctx.plaf.metadata.query_names {
+            let s = ctx.eval_partial(selector, row);
+            if s.is_const_not_zero() {
+                for (q, name) in map.iter() {
+                    let ColumnQuery { column, rotation } = q;
+                    let abs_offset = (row as i32 + rotation)
+                        .rem_euclid(ctx.plaf.info.num_rows as i32)
+                        - offset as i32;
+                    if abs_offset < 0 || abs_offset >= N_ROWS as i32 {
+                        continue;
+                    }
+                    let abs_offset = abs_offset as usize;
+                    let query_name: &mut String = match column.kind {
+                        ColumnKind::Fixed => &mut query_names_fixed[column.index][abs_offset],
+                        ColumnKind::Witness => &mut query_names_witness[column.index][abs_offset],
+                        _ => unimplemented!(),
+                    };
+                    if query_name.len() == 0 {
+                        *query_name = format!("{}", name);
+                    } else {
+                        *query_name = format!("{},{}", query_name, name);
+                    }
+                }
+            }
+        }
+    }
     for row in offset..offset + N_ROWS {
+        let mut row_names = Vec::new();
+        row_names.push(String::new());
+        for index in 0..ctx.plaf.columns.fixed.len() {
+            row_names.push(query_names_fixed[index][row - offset].clone());
+        }
+        for index in 0..ctx.plaf.columns.witness.len() {
+            row_names.push(query_names_witness[index][row - offset].clone());
+        }
+        table.push_row(row_names);
+
         let mut row_values = Vec::new();
         row_values.push(Some(format!("{}", row)));
         for index in 0..ctx.plaf.columns.fixed.len() {
-            row_values.push(ctx.plaf.fixed[index][row].clone().map(|v| format!("{}", v)));
+            row_values.push(Some(
+                ctx.plaf.fixed[index][row]
+                    .clone()
+                    .map(|v| format!("{}", v))
+                    .unwrap_or_else(|| format!("-")),
+            ));
         }
         for index in 0..ctx.plaf.columns.public.len() {
             // TODO
@@ -430,10 +658,10 @@ fn set_witness(ctx: &mut Context, cell_str: &str, val_str: &str) {
     if let Some(var) = ctx.alias_map.0.get(name_str) {
         let offset = usize::from_str_radix(offset_str, 10).unwrap();
         match var {
-            Var::ColumnQuery {
+            Var::Query(ColumnQuery {
                 column,
                 rotation: _,
-            } => match column.kind {
+            }) => match column.kind {
                 ColumnKind::Witness => {
                     ctx.witness.witness[column.index][offset] = val.map(|v| BigUint::from(v));
                     ctx.analyze(
@@ -480,8 +708,16 @@ fn run(ctx: &mut Context, line: &str) {
             return;
         }
         print_polys(&ctx, args[0]);
+    } else if cmd == &"l" || cmd == &"lookups" {
+        if args.len() != 1 {
+            println!("Error: Invalid args: {:?}", args);
+            return;
+        }
+        print_lookups(&ctx, args[0]);
     } else if cmd == &"a" || cmd == &"analyze" {
         ctx.analyze_all();
+    } else if cmd.starts_with("#") {
+        return;
     } else {
         println!("Error: Unknown command {}", cmd);
         return;
