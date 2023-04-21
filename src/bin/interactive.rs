@@ -511,13 +511,13 @@ fn print_polys(ctx: &Context, offset_str: &str) {
         let exp = ctx.eval_partial(&poly.exp, offset);
         // exp.normalize(p);
         println!("\"{}\"", poly.name);
-        println!(
-            "  ori0: {}",
-            ExprDisplay {
-                e: &poly.exp,
-                var_fmt: |f, v| ctx.plaf.fmt_var(f, v)
-            },
-        );
+        // println!(
+        //     "  ori0: {}",
+        //     ExprDisplay {
+        //         e: &poly.exp,
+        //         var_fmt: |f, v| ctx.plaf.fmt_var(f, v)
+        //     },
+        // );
         println!(
             "  ori1: {}",
             ExprDisplay {
@@ -533,11 +533,28 @@ fn print_polys(ctx: &Context, offset_str: &str) {
                 }
             }
         );
+        // println!(
+        //     "  res0: {}",
+        //     ExprDisplay {
+        //         e: &exp,
+        //         var_fmt: cell_fmt
+        //     }
+        // );
         println!(
-            "  res: {}",
+            "  res1: {}",
             ExprDisplay {
                 e: &exp,
-                var_fmt: cell_fmt
+                var_fmt: |f, v| {
+                    let q = ColumnQuery {
+                        column: v.column,
+                        rotation: v.offset as i32 - offset as i32,
+                    };
+                    if let Some(name) = query_names.get(&q) {
+                        write!(f, "{}", name)?;
+                        return Ok(());
+                    }
+                    cell_fmt(f, &v)
+                }
             }
         );
     }
