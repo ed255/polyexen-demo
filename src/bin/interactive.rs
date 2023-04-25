@@ -57,6 +57,10 @@ impl PolyRef {
     }
 }
 
+struct View {
+    columns: Vec<(ColumnKind, usize)>,
+}
+
 struct Context {
     plaf: Plaf,
     alias_map: AliasMap,
@@ -67,6 +71,7 @@ struct Context {
     analysis: RefCell<Analysis<Cell>>,
     witness: Witness,
     bound_default: Bound,
+    view: View,
 }
 
 impl Context {
@@ -76,6 +81,17 @@ impl Context {
         let witness = plaf.gen_empty_witness();
         let bound_default = bound_base(p);
         let alias_map = plaf.alias_map();
+        let mut columns = Vec::new();
+        for i in 0..plaf.columns.fixed.len() {
+            columns.push((ColumnKind::Fixed, i));
+        }
+        for i in 0..plaf.columns.witness.len() {
+            columns.push((ColumnKind::Witness, i));
+        }
+        for i in 0..plaf.columns.public.len() {
+            columns.push((ColumnKind::Public, i));
+        }
+        let view = View { columns };
         let mut ctx = Context {
             plaf,
             alias_map,
@@ -84,10 +100,12 @@ impl Context {
             analysis: RefCell::new(analysis),
             witness,
             bound_default,
+            view,
         };
         ctx.cell_expr_map = ctx.cell_expr_map();
         ctx.cell_lookup_src_map = ctx.cell_lookup_src_map();
-        ctx.analyze_all();
+        // TODO: Uncomment
+        // ctx.analyze_all();
         ctx
     }
 
@@ -315,6 +333,39 @@ impl Context {
         }
         // println!("DBG2 {}", self.analysis.borrow().vars_attrs.len());
     }
+
+    fn cell_value(&self, kind: ColumnKind, index: usize, row: usize) -> Option<String> {
+        use ColumnKind::*;
+        match kind {
+            Fixed => Some(
+                self.plaf.fixed[index][row]
+                    .clone()
+                    .map(|v| format!("{}", v))
+                    .unwrap_or_else(|| format!("-")),
+            ),
+            Public => {
+                // TODO
+                None
+            }
+            Witness => {
+                if let Some(f) = &self.witness.witness[index][row] {
+                    return Some(format!("{}", f));
+                }
+                if let Some(attrs) = self.analysis.borrow().vars_attrs.get(&Cell {
+                    column: Column {
+                        kind: ColumnKind::Witness,
+                        index,
+                    },
+                    offset: row,
+                }) {
+                    if attrs.bound != self.bound_default {
+                        return Some(format!("{}", attrs.bound));
+                    }
+                }
+                None
+            }
+        }
+    }
 }
 
 fn alias_replace(plaf: &mut Plaf) {
@@ -328,14 +379,14 @@ fn alias_replace(plaf: &mut Plaf) {
     {
         for alias in aliases.iter_mut() {
             // Bytecode
-            // *alias = alias.replace("BYTECODE_", "");
+            *alias = alias.replace("BYTECODE_", "");
 
             // Exp
-            *alias = alias.replace("EXP_", "");
-            *alias = alias.replace("GADGET_MUL_ADD", "MulAdd");
-            *alias = alias.replace("_col", "_c");
-            *alias = alias.replace("identifier", "id");
-            *alias = alias.replace("parity_check", "parChe");
+            // *alias = alias.replace("EXP_", "");
+            // *alias = alias.replace("GADGET_MUL_ADD", "MulAdd");
+            // *alias = alias.replace("_col", "_c");
+            // *alias = alias.replace("identifier", "id");
+            // *alias = alias.replace("parity_check", "parChe");
         }
     }
 }
@@ -343,15 +394,15 @@ fn alias_replace(plaf: &mut Plaf) {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    // let block = gen_empty_block();
-    // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
+    let block = gen_empty_block();
+    let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
     // let circuit = ExpCircuit::<Fr>::new_from_block(&block);
     let k: u32 = 12;
-    use eth_types::Word;
-    let witnesses: Vec<Word> = vec![Word::from(0), Word::from(0), Word::from(0)];
-    let circuit = UnitTestMathGadgetBaseCircuit::<AddWordsTestContainer<Fr, 2, 0u64, true>>::new(
-        k as usize, witnesses,
-    );
+    // use eth_types::Word;
+    // let witnesses: Vec<Word> = vec![Word::from(0), Word::from(0), Word::from(0)];
+    // let circuit = UnitTestMathGadgetBaseCircuit::<AddWordsTestContainer<Fr, 2, 0u64, true>>::new(
+    //     k as usize, witnesses,
+    // );
     let mut plaf = get_plaf(k, &circuit).unwrap();
     alias_replace(&mut plaf);
     plaf.simplify();
@@ -371,6 +422,10 @@ fn main() {
     //     );
     //     println!("  {:?}", attrs.bound);
     // }
+    gui(ctx);
+    return;
+
+    /*
     let mut rl = DefaultEditor::new().unwrap();
     if rl.load_history("history.txt").is_err() {
         println!("No previous history.");
@@ -407,6 +462,7 @@ fn main() {
         }
     }
     rl.save_history("history.txt").unwrap();
+    */
 }
 
 /// Helper type to print formatted tables in MarkDown
@@ -738,5 +794,214 @@ fn run(ctx: &mut Context, line: &str) {
     } else {
         println!("Error: Unknown command {}", cmd);
         return;
+    }
+}
+
+// ---
+
+fn gui(ctx: Context) {
+    let app = app::App::default().with_scheme(app::Scheme::Gtk);
+    let mut wind = window::Window::default().with_size(800, 600);
+    // We need an input widget
+    let mut inp = input::Input::default();
+    inp.hide();
+
+    let mut table = MyTable::new(inp.clone(), ctx);
+
+    wind.make_resizable(true);
+    wind.end();
+    wind.show();
+
+    wind.handle(move |_, ev| match ev {
+        enums::Event::KeyDown => {
+            if app::event_key() == enums::Key::Enter {
+                // Press enter to store the data into the cell
+                let c = table.cell.borrow();
+                table.data.borrow_mut()[c.row as usize][c.col as usize] = inp.value();
+                inp.set_value("");
+                inp.hide();
+                return true;
+            }
+            table.redraw();
+            false
+        }
+        _ => false,
+    });
+
+    wind.set_callback(|_| {
+        if app::event() == enums::Event::Close {
+            // Close only when the close button is clicked
+            app::quit();
+        }
+    });
+
+    app.run().unwrap();
+}
+
+use fltk::{
+    app, draw, enums, input,
+    prelude::{GroupExt, InputExt, TableExt, WidgetBase, WidgetExt},
+    table, window,
+};
+use std::rc::Rc;
+
+pub type MyData = Vec<Vec<String>>;
+
+// Needed to store cell information during the draw_cell call
+#[derive(Default)]
+struct CellData {
+    row: i32, // row
+    col: i32, // column
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+}
+
+impl CellData {
+    pub fn select(&mut self, row: i32, col: i32, x: i32, y: i32, w: i32, h: i32) {
+        self.row = row;
+        self.col = col;
+        self.x = x;
+        self.y = y;
+        self.w = w;
+        self.h = h;
+    }
+}
+
+pub struct MyTable {
+    table: table::Table,
+    data: Rc<RefCell<MyData>>,
+    cell: Rc<RefCell<CellData>>,
+    ctx: Rc<RefCell<Context>>,
+}
+
+impl MyTable {
+    fn new(mut inp: input::Input, ctx: Context) -> Self {
+        let mut table = table::Table::default()
+            .with_size(800 - 10, 600 - 10)
+            .center_of_parent();
+        let data = Rc::from(RefCell::from(vec![vec![String::from(""); 26]; 28]));
+        let cell = Rc::from(RefCell::from(CellData::default()));
+        let ctx = Rc::from(RefCell::from(ctx));
+
+        {
+            let plaf = &ctx.borrow().plaf;
+            table.set_rows(plaf.info.num_rows as i32);
+            table.set_row_header(true);
+            table.set_row_resize(true);
+            table.set_cols(
+                (plaf.columns.fixed.len() + plaf.columns.witness.len() + plaf.columns.public.len())
+                    as i32,
+            );
+            table.set_col_header(true);
+            table.set_col_width_all(80);
+            table.set_col_resize(true);
+            table.end();
+        }
+
+        let cell_c = cell.clone();
+        let data_c = data.clone();
+        let ctx_c = ctx.clone();
+
+        // Called when the table is drawn then when it's redrawn due to events
+        table.draw_cell(move |t, c, row, col, x, y, w, h| match c {
+            table::TableContext::StartPage => draw::set_font(enums::Font::Helvetica, 14),
+            table::TableContext::ColHeader => {
+                let ctx = ctx_c.borrow();
+                let plaf = &ctx.plaf;
+                let col = ctx.view.columns[col as usize];
+                let name = match col.0 {
+                    Fixed => plaf.columns.fixed[col.1].name(),
+                    Public => plaf.columns.public[col.1].name(),
+                    Witness => plaf.columns.witness[col.1].name(),
+                };
+                use ColumnKind::*;
+                Self::draw_header(&format!("{}", name), x, y, w, h)
+            } // Column titles
+            table::TableContext::RowHeader => {
+                Self::draw_header(&format!("{}", row + 1), x, y, w, h)
+            } // Row titles
+            table::TableContext::Cell => {
+                if t.is_selected(row, col) {
+                    cell_c.borrow_mut().select(row, col, x, y, w, h); // Captures the cell information
+                }
+                let ctx = ctx_c.borrow();
+                let column = ctx.view.columns[col as usize];
+                Self::draw_data(
+                    &ctx.cell_value(column.0, column.1, row as usize)
+                        .unwrap_or_else(|| "".to_string()),
+                    // &"".to_string(),
+                    x,
+                    y,
+                    w,
+                    h,
+                    t.is_selected(row, col),
+                );
+            }
+            _ => (),
+        });
+
+        let cell_c = cell.clone();
+        let data_c = data.clone();
+
+        table.handle(move |_, ev| match ev {
+            // Event::Push will happen before the focus is moved,
+            // thus giving the previous coordinates.
+            // Event::Released gives an accurate position
+            enums::Event::Released => {
+                let c = cell_c.borrow();
+                inp.resize(c.x, c.y, c.w, c.h);
+                // inp.set_value(&data_c.borrow_mut()[c.row as usize][c.col as usize]);
+                inp.show();
+                inp.take_focus().ok();
+                inp.redraw();
+                true
+            }
+            _ => false,
+        });
+
+        Self {
+            table,
+            data,
+            cell,
+            ctx,
+        }
+    }
+
+    pub fn redraw(&mut self) {
+        self.table.redraw()
+    }
+
+    fn draw_header(txt: &str, x: i32, y: i32, w: i32, h: i32) {
+        draw::push_clip(x, y, w, h);
+        draw::draw_box(
+            enums::FrameType::ThinUpBox,
+            x,
+            y,
+            w,
+            h,
+            enums::Color::FrameDefault,
+        );
+        draw::set_draw_color(enums::Color::Black);
+        draw::set_font(enums::Font::Helvetica, 14);
+        draw::draw_text2(txt, x, y, w, h, enums::Align::Center);
+        draw::pop_clip();
+    }
+
+    // The selected flag sets the color of the cell to a grayish color, otherwise white
+    fn draw_data(txt: &str, x: i32, y: i32, w: i32, h: i32, selected: bool) {
+        draw::push_clip(x, y, w, h);
+        if selected {
+            draw::set_draw_color(enums::Color::from_u32(0x00D3_D3D3));
+        } else {
+            draw::set_draw_color(enums::Color::White);
+        }
+        draw::draw_rectf(x, y, w, h);
+        draw::set_draw_color(enums::Color::Gray0);
+        draw::set_font(enums::Font::Helvetica, 14);
+        draw::draw_text2(txt, x, y, w, h, enums::Align::Center);
+        draw::draw_rect(x, y, w, h);
+        draw::pop_clip();
     }
 }
