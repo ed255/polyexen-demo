@@ -1,3 +1,5 @@
+mod utils;
+
 use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
 use eth_types::{bytecode, geth_types::GethData, ToWord, Word};
 use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr, plonk::Circuit};
@@ -19,7 +21,7 @@ use zkevm_circuits::{
     evm_circuit::EvmCircuit,
     exp_circuit::ExpCircuit,
     keccak_circuit::KeccakCircuit,
-    pi_circuit::PiTestCircuit as PiCircuit,
+    pi_circuit::PiCircuit,
     state_circuit::StateCircuit,
     super_circuit::SuperCircuit,
     tx_circuit::TxCircuit,
@@ -32,7 +34,7 @@ use std::{
     io::{self, Write},
 };
 
-use crate::{gen_empty_block, name_challanges};
+use utils::{alias_replace, gen_empty_block, name_challanges};
 
 fn write_files(name: &str, plaf: &Plaf) -> Result<(), io::Error> {
     let mut base_file = File::create(format!("out/{}.toml", name))?;
@@ -78,6 +80,7 @@ fn gen_circuit_plaf<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32, block: 
     let circuit = C::new_from_block(&block);
     let mut plaf = get_plaf(k, &circuit).unwrap();
     name_challanges(&mut plaf);
+    alias_replace(&mut plaf);
     write_files(name, &plaf).unwrap();
 }
 
@@ -107,8 +110,8 @@ fn demo_get_plaf() {
     gen_circuit_plaf::<CopyCircuit<Fr>>("copy", 9, &block);
     gen_circuit_plaf::<KeccakCircuit<Fr>>("keccak", 11, &block);
     gen_circuit_plaf::<ExpCircuit<Fr>>("exp", 10, &block);
-    gen_circuit_plaf::<PiCircuit<Fr, 1, 64>>("pi", 17, &block);
-    gen_circuit_plaf::<SuperCircuit<Fr, 1, 64, 0x100>>("super", 19, &block);
+    gen_circuit_plaf::<PiCircuit<Fr>>("pi", 17, &block);
+    gen_circuit_plaf::<SuperCircuit<Fr>>("super", 19, &block);
 }
 
 fn demo_analysis() {
@@ -165,5 +168,6 @@ fn demo_plaf_halo2() {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    demo_analysis();
+    // demo_analysis();
+    demo_get_plaf();
 }
