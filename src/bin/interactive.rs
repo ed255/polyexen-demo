@@ -31,7 +31,7 @@ use zkevm_circuits::{
 
 const N_ROWS: usize = 20;
 
-use crate::utils::{gen_empty_block, name_challanges};
+use demo::utils::{gen_empty_block, name_challanges};
 
 #[derive(Debug, Clone, Copy)]
 struct PolyRef {

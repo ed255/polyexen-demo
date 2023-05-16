@@ -1,5 +1,3 @@
-mod utils;
-
 use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
 use eth_types::{bytecode, geth_types::GethData, ToWord, Word};
 use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr, plonk::Circuit};
@@ -34,7 +32,7 @@ use std::{
     io::{self, Write},
 };
 
-use utils::{alias_replace, gen_empty_block, name_challanges};
+use demo::utils::{alias_replace, gen_empty_block, name_challanges};
 
 fn write_files(name: &str, plaf: &Plaf) -> Result<(), io::Error> {
     let mut base_file = File::create(format!("out/{}.toml", name))?;
