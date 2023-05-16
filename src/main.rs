@@ -103,15 +103,15 @@ fn circuit_plaf_mock_prover<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32)
 
 fn demo_get_plaf() {
     let block = gen_empty_block();
-    gen_circuit_plaf::<EvmCircuit<Fr>>("evm", 18, &block);
-    gen_circuit_plaf::<StateCircuit<Fr>>("state", 17, &block);
+    // gen_circuit_plaf::<EvmCircuit<Fr>>("evm", 18, &block);
+    // gen_circuit_plaf::<StateCircuit<Fr>>("state", 17, &block);
     gen_circuit_plaf::<TxCircuit<Fr>>("tx", 19, &block);
-    gen_circuit_plaf::<BytecodeCircuit<Fr>>("bytecode", 9, &block);
-    gen_circuit_plaf::<CopyCircuit<Fr>>("copy", 9, &block);
-    gen_circuit_plaf::<KeccakCircuit<Fr>>("keccak", 11, &block);
-    gen_circuit_plaf::<ExpCircuit<Fr>>("exp", 10, &block);
-    gen_circuit_plaf::<PiCircuit<Fr>>("pi", 17, &block);
-    gen_circuit_plaf::<SuperCircuit<Fr>>("super", 19, &block);
+    // gen_circuit_plaf::<BytecodeCircuit<Fr>>("bytecode", 9, &block);
+    // gen_circuit_plaf::<CopyCircuit<Fr>>("copy", 9, &block);
+    // gen_circuit_plaf::<KeccakCircuit<Fr>>("keccak", 11, &block);
+    // gen_circuit_plaf::<ExpCircuit<Fr>>("exp", 10, &block);
+    // gen_circuit_plaf::<PiCircuit<Fr>>("pi", 17, &block);
+    // gen_circuit_plaf::<SuperCircuit<Fr>>("super", 19, &block);
 }
 
 fn demo_analysis() {

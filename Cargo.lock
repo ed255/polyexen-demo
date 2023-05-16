@@ -1421,6 +1421,7 @@ dependencies = [
 [[package]]
 name = "halo2_proofs"
 version = "0.2.0"
+source = "git+https://github.com/appliedzkp/halo2.git?rev=d3746109d7d38be53afc8ddae8fdfaf1f02ad1d7#d3746109d7d38be53afc8ddae8fdfaf1f02ad1d7"
 dependencies = [
  "blake2b_simd",
  "ff 0.13.0",
@@ -1454,6 +1455,7 @@ dependencies = [
 [[package]]
 name = "halo2wrong"
 version = "0.1.0"
+source = "git+https://github.com/privacy-scaling-explorations/halo2wrong?tag=v2023_04_20#f72db265aa3cebe297c9b9816e940d0e1d400886"
 dependencies = [
  "halo2_proofs 0.2.0",
  "num-bigint",
