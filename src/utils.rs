@@ -63,6 +63,13 @@ pub fn alias_replace(plaf: &mut Plaf) {
                 ("first", "fst"),
                 // Bytecode
                 ("BYTECODE_", "bc."),
+                // Bytecode Chiquito
+                ("halo2 fixed ", ""),
+                ("halo2 advice ", ""),
+                ("srcm forward ", "fwd_"),
+                ("srcm internal signal ", "int_"),
+                ("length", "len"),
+                ("value", "val"),
                 // EVM
                 ("EVM_", "ev."),
                 // Exp

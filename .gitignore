@@ -1,6 +1,6 @@
 /target
-out/*.csv
-out/*.toml
-out/*.sqlite
+out/**/*.csv
+out/**/*.toml
+out/**/*.sqlite
 history.txt
 out.tgz

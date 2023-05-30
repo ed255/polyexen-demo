@@ -16,6 +16,7 @@ use std::{
 };
 use zkevm_circuits::{
     bytecode_circuit::circuit::BytecodeCircuit,
+    copy_circuit::CopyCircuit,
     evm_circuit::util::math_gadget::add_words::tests::AddWordsTestContainer,
     evm_circuit::util::math_gadget::test_util::UnitTestMathGadgetBaseCircuit,
     // copy_circuit::CopyCircuit,
@@ -346,12 +347,15 @@ fn main() {
     // let block = gen_empty_block();
     // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
     // let circuit = ExpCircuit::<Fr>::new_from_block(&block);
-    let k: u32 = 12;
-    use eth_types::Word;
-    let witnesses: Vec<Word> = vec![Word::from(0), Word::from(0), Word::from(0)];
-    let circuit = UnitTestMathGadgetBaseCircuit::<AddWordsTestContainer<Fr, 2, 0u64, true>>::new(
-        k as usize, witnesses,
-    );
+    // let k: u32 = 12;
+    // use eth_types::Word;
+    // let witnesses: Vec<Word> = vec![Word::from(0), Word::from(0), Word::from(0)];
+    // let circuit = UnitTestMathGadgetBaseCircuit::<AddWordsTestContainer<Fr, 2, 0u64, true>>::new(
+    //     k as usize, witnesses,
+    // );
+    let block = gen_empty_block();
+    let circuit = CopyCircuit::<Fr>::new_from_block(&block);
+    let k: u32 = 10;
     let mut plaf = get_plaf(k, &circuit).unwrap();
     alias_replace(&mut plaf);
     plaf.simplify();

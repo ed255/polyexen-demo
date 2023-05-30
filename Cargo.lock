@@ -354,6 +354,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "chiquito"
+version = "0.1.0"
+source = "git+https://github.com/privacy-scaling-explorations/chiquito?tag=v2023_04_26_halo2_v2023_04_20#6a13f20ea100d6b09636dc70186ae6f2069d0fc2"
+dependencies = [
+ "halo2_proofs 0.2.0",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3814,6 +3822,7 @@ version = "0.1.0"
 dependencies = [
  "array-init",
  "bus-mapping",
+ "chiquito",
  "ecc",
  "ecdsa 0.1.0",
  "env_logger",
@@ -3839,5 +3848,4 @@ dependencies = [
  "snark-verifier",
  "strum",
  "strum_macros",
- "subtle",
 ]
