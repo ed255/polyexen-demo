@@ -17,8 +17,8 @@ use std::{
 use zkevm_circuits::{
     bytecode_circuit::circuit::BytecodeCircuit,
     copy_circuit::CopyCircuit,
-    evm_circuit::util::math_gadget::add_words::tests::AddWordsTestContainer,
-    evm_circuit::util::math_gadget::test_util::UnitTestMathGadgetBaseCircuit,
+    // evm_circuit::util::math_gadget::add_words::tests::AddWordsTestContainer,
+    // evm_circuit::util::math_gadget::test_util::UnitTestMathGadgetBaseCircuit,
     // copy_circuit::CopyCircuit,
     // evm_circuit::EvmCircuit,
     // exp_circuit::ExpCircuit,
@@ -329,14 +329,14 @@ fn alias_replace(plaf: &mut Plaf) {
     {
         for alias in aliases.iter_mut() {
             // Bytecode
-            // *alias = alias.replace("BYTECODE_", "");
+            *alias = alias.replace("BYTECODE_", "");
 
             // Exp
-            *alias = alias.replace("EXP_", "");
-            *alias = alias.replace("GADGET_MUL_ADD", "MulAdd");
-            *alias = alias.replace("_col", "_c");
-            *alias = alias.replace("identifier", "id");
-            *alias = alias.replace("parity_check", "parChe");
+            // *alias = alias.replace("EXP_", "");
+            // *alias = alias.replace("GADGET_MUL_ADD", "MulAdd");
+            // *alias = alias.replace("_col", "_c");
+            // *alias = alias.replace("identifier", "id");
+            // *alias = alias.replace("parity_check", "parChe");
         }
     }
 }
@@ -344,8 +344,8 @@ fn alias_replace(plaf: &mut Plaf) {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    // let block = gen_empty_block();
-    // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
+    let block = gen_empty_block();
+    let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
     // let circuit = ExpCircuit::<Fr>::new_from_block(&block);
     // let k: u32 = 12;
     // use eth_types::Word;
@@ -353,8 +353,8 @@ fn main() {
     // let circuit = UnitTestMathGadgetBaseCircuit::<AddWordsTestContainer<Fr, 2, 0u64, true>>::new(
     //     k as usize, witnesses,
     // );
-    let block = gen_empty_block();
-    let circuit = CopyCircuit::<Fr>::new_from_block(&block);
+    // let block = gen_empty_block();
+    // let circuit = CopyCircuit::<Fr>::new_from_block(&block);
     let k: u32 = 10;
     let mut plaf = get_plaf(k, &circuit).unwrap();
     alias_replace(&mut plaf);
