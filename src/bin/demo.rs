@@ -101,9 +101,9 @@ fn circuit_plaf_mock_prover<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32)
 
 fn demo_get_plaf() {
     let block = gen_empty_block();
-    gen_circuit_plaf::<EvmCircuit<Fr>>("evm", 18, &block);
+    // gen_circuit_plaf::<EvmCircuit<Fr>>("evm", 18, &block);
     // gen_circuit_plaf::<StateCircuit<Fr>>("state", 17, &block);
-    // gen_circuit_plaf::<TxCircuit<Fr>>("tx", 19, &block);
+    gen_circuit_plaf::<TxCircuit<Fr>>("tx", 19, &block);
     // gen_circuit_plaf::<BytecodeCircuit<Fr>>("bytecode", 9, &block);
     // gen_circuit_plaf::<CopyCircuit<Fr>>("copy", 9, &block);
     // gen_circuit_plaf::<KeccakCircuit<Fr>>("keccak", 11, &block);
@@ -166,6 +166,6 @@ fn demo_plaf_halo2() {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    demo_analysis();
-    // demo_get_plaf();
+    // demo_analysis();
+    demo_get_plaf();
 }
