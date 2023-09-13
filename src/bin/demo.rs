@@ -79,6 +79,28 @@ fn gen_circuit_plaf<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32, block: 
     let mut plaf = get_plaf(k, &circuit).unwrap();
     name_challanges(&mut plaf);
     alias_replace(&mut plaf);
+    // BEGIN RAW CONSTRAINTS
+    let cell_fmt =
+        |f: &mut fmt::Formatter<'_>, c: &Cell| write!(f, "{}", CellDisplay { c, plaf: &plaf });
+    // for offset in 0..16 {
+    for offset in 0..plaf.info.num_rows {
+        for poly in &plaf.polys {
+            let mut exp = plaf.resolve(&poly.exp, offset);
+            exp.simplify(&plaf.info.p);
+            if exp.is_zero() {
+                continue;
+            }
+            println!(
+                "{} = 0 # {}",
+                ExprDisplay {
+                    e: &exp,
+                    var_fmt: cell_fmt
+                },
+                poly.name,
+            );
+        }
+    }
+    // END RAW CONSTRAINTS
     write_files(name, &plaf).unwrap();
 }
 
