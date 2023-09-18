@@ -1,8 +1,10 @@
 use halo2_proofs::halo2curves::bn256::Fr;
-use num_bigint::BigUint;
+use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 use polyexen::{
-    analyze::{bound_base, find_bounds_poly, solve_ranged_linear_comb, Analysis, Attrs, Bound},
+    analyze::{
+        bound_base, find_bounds_poly, solve_ranged_linear_comb, to_biguint, Analysis, Attrs, Bound,
+    },
     expr::{Column, ColumnKind, ColumnQuery, Expr, ExprDisplay, PlonkVar as Var},
     plaf::{frontends::halo2::get_plaf, AliasMap, Cell, CellDisplay, Lookup, Plaf, Witness},
 };
@@ -14,6 +16,7 @@ use std::{
     fs::File,
     io::{self, BufRead, BufReader},
 };
+/*
 use zkevm_circuits::{
     bytecode_circuit::circuit::BytecodeCircuit,
     copy_circuit::CopyCircuit,
@@ -29,10 +32,13 @@ use zkevm_circuits::{
     // tx_circuit::TxCircuit,
     util::SubCircuit,
 };
+*/
+use zkevm_hashes::sha256::vanilla::tests::Sha256BitCircuit;
 
-const N_ROWS: usize = 20;
+const N_ROWS: usize = 0x50;
 
-use demo::utils::{gen_empty_block, name_challanges};
+// use demo::utils::{gen_empty_block, name_challanges};
+use demo::utils::name_challanges;
 
 #[derive(Debug, Clone, Copy)]
 struct PolyRef {
@@ -116,11 +122,12 @@ impl Context {
                 let offset =
                     (offset as i32 + rotation).rem_euclid(self.plaf.info.num_rows as i32) as usize;
                 match column.kind {
-                    ColumnKind::Fixed => Expr::Const(
+                    ColumnKind::Fixed => Expr::Const(to_biguint(
                         self.plaf.fixed[column.index][offset]
                             .clone()
-                            .unwrap_or_else(BigUint::zero),
-                    ),
+                            .unwrap_or_else(BigInt::zero),
+                        &self.plaf.info.p,
+                    )),
                     ColumnKind::Witness => {
                         if WITNESS {
                             if let Some(f) = self.resolve_wit(column.index, offset) {
@@ -344,8 +351,11 @@ fn alias_replace(plaf: &mut Plaf) {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let block = gen_empty_block();
-    let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
+    let k: u32 = 10;
+    let inputs = vec![vec![0x61], vec![0x01, 0x02, 0x03]];
+    let circuit = Sha256BitCircuit::<Fr>::new(Some(2usize.pow(k) - 109usize), inputs, false);
+    // let block = gen_empty_block();
+    // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
     // let circuit = ExpCircuit::<Fr>::new_from_block(&block);
     // let k: u32 = 12;
     // use eth_types::Word;
@@ -355,7 +365,7 @@ fn main() {
     // );
     // let block = gen_empty_block();
     // let circuit = CopyCircuit::<Fr>::new_from_block(&block);
-    let k: u32 = 10;
+    // let k: u32 = 10;
     let mut plaf = get_plaf(k, &circuit).unwrap();
     alias_replace(&mut plaf);
     plaf.simplify();
@@ -432,10 +442,10 @@ impl DisplayTable {
     }
     fn print_row(row: &Vec<String>, rows_width: &[usize]) {
         for (i, h) in row.iter().enumerate() {
-            if i == 0 {
-                print!("|");
-            }
-            print!(" {:width$} |", h, width = rows_width[i]);
+            // if i == 0 {
+            //     print!("|");
+            // }
+            print!("{:width$} ", h, width = rows_width[i]);
         }
         println!();
     }
@@ -450,10 +460,10 @@ impl DisplayTable {
         }
         Self::print_row(&self.header, &rows_width);
         for (i, width) in rows_width.iter().enumerate() {
-            if i == 0 {
-                print!("|");
-            }
-            print!(" {:-<width$} |", "", width = width);
+            // if i == 0 {
+            //     print!("|");
+            // }
+            print!("{:-<width$} ", "", width = width);
         }
         println!();
         for row in &self.rows {
@@ -620,22 +630,26 @@ fn print_table(ctx: &Context, offset_str: &str) {
         table.push_row(row_names);
 
         let mut row_values = Vec::new();
-        row_values.push(Some(format!("{}", row)));
+        row_values.push(Some(format!("{:x}", row)));
         for index in 0..ctx.plaf.columns.fixed.len() {
             row_values.push(Some(
                 ctx.plaf.fixed[index][row]
                     .clone()
-                    .map(|v| format!("{}", v))
+                    .map(|v| format!("{:x}", v))
                     .unwrap_or_else(|| format!("-")),
             ));
         }
         for index in 0..ctx.plaf.columns.public.len() {
             // TODO
-            row_values.push(ctx.plaf.fixed[index][row].clone().map(|v| format!("{}", v)));
+            row_values.push(
+                ctx.plaf.fixed[index][row]
+                    .clone()
+                    .map(|v| format!("{:x}", v)),
+            );
         }
         for index in 0..ctx.plaf.columns.witness.len() {
             if let Some(f) = &ctx.witness.witness[index][row] {
-                row_values.push(Some(format!("{}", f)));
+                row_values.push(Some(format!("{:x}", f)));
                 continue;
             }
             if let Some(attrs) = ctx.analysis.borrow().vars_attrs.get(&Cell {
@@ -653,7 +667,7 @@ fn print_table(ctx: &Context, offset_str: &str) {
             row_values.push(
                 ctx.witness.witness[index][row]
                     .clone()
-                    .map(|v| format!("{}", v)),
+                    .map(|v| format!("{:x}", v)),
             );
         }
         table.push_row(

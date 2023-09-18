@@ -1,11 +1,12 @@
-use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
+// use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
 use convert_case::{Case, Casing};
-use eth_types::geth_types::GethData;
+// use eth_types::geth_types::GethData;
 use halo2_proofs::halo2curves::bn256::Fr;
-use mock::test_ctx::TestContext;
+// use mock::test_ctx::TestContext;
 use polyexen::plaf::Plaf;
-use zkevm_circuits::witness::{block_convert, Block};
+// use zkevm_circuits::witness::{block_convert, Block};
 
+/*
 pub fn gen_empty_block() -> Block<Fr> {
     let block: GethData = TestContext::<0, 0>::new(None, |_| {}, |_, _| {}, |b, _| b)
         .unwrap()
@@ -31,6 +32,7 @@ pub fn gen_empty_block() -> Block<Fr> {
     let block = block_convert(&builder.block, &builder.code_db).unwrap();
     block
 }
+*/
 
 pub fn name_challanges(plaf: &mut Plaf) {
     plaf.set_challange_alias(0, "rWord".to_string());

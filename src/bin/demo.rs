@@ -1,7 +1,7 @@
-use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
-use eth_types::{bytecode, geth_types::GethData, ToWord, Word};
+// use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
+// use eth_types::{bytecode, geth_types::GethData, ToWord, Word};
 use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr, plonk::Circuit};
-use mock::test_ctx::TestContext;
+// use mock::test_ctx::TestContext;
 use num_bigint::BigUint;
 use polyexen::{
     analyze::{bound_base, find_bounds_poly, Analysis},
@@ -16,26 +16,28 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
 };
-use zkevm_circuits::{
-    bytecode_circuit::circuit::BytecodeCircuit,
-    copy_circuit::CopyCircuit,
-    evm_circuit::EvmCircuit,
-    exp_circuit::ExpCircuit,
-    keccak_circuit::KeccakCircuit,
-    pi_circuit::PiCircuit,
-    state_circuit::StateCircuit,
-    super_circuit::SuperCircuit,
-    tx_circuit::TxCircuit,
-    util::SubCircuit,
-    witness::{block_convert, Block},
-};
+use zkevm_hashes::sha256::vanilla::tests::Sha256BitCircuit;
+// use zkevm_circuits::{
+//     bytecode_circuit::circuit::BytecodeCircuit,
+//     copy_circuit::CopyCircuit,
+//     evm_circuit::EvmCircuit,
+//     exp_circuit::ExpCircuit,
+//     keccak_circuit::KeccakCircuit,
+//     pi_circuit::PiCircuit,
+//     state_circuit::StateCircuit,
+//     super_circuit::SuperCircuit,
+//     tx_circuit::TxCircuit,
+//     util::SubCircuit,
+//     witness::{block_convert, Block},
+// };
 
 use std::{
     fs::File,
     io::{self, Write},
 };
 
-use demo::utils::{alias_replace, gen_empty_block, name_challanges};
+// use demo::utils::{alias_replace, gen_empty_block, name_challanges};
+use demo::utils::{alias_replace, name_challanges};
 
 fn write_files(name: &str, plaf: &Plaf) -> Result<(), io::Error> {
     let mut base_file = File::create(format!("out/{}.toml", name))?;
@@ -45,6 +47,7 @@ fn write_files(name: &str, plaf: &Plaf) -> Result<(), io::Error> {
     Ok(())
 }
 
+/*
 fn gen_small_block() -> Block<Fr> {
     let bytecode = bytecode! {
         PUSH32(0x1234)
@@ -76,6 +79,7 @@ fn gen_small_block() -> Block<Fr> {
     let block = block_convert(&builder.block, &builder.code_db).unwrap();
     block
 }
+*/
 
 #[derive(Default, Debug)]
 struct VarPointers {
@@ -84,11 +88,7 @@ struct VarPointers {
     copys: Vec<usize>,
 }
 
-fn gen_circuit_plaf<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32, block: &Block<Fr>) {
-    let circuit = C::new_from_block(&block);
-    let mut plaf = get_plaf(k, &circuit).unwrap();
-    name_challanges(&mut plaf);
-    alias_replace(&mut plaf);
+fn transform_to_raw_constraints(plaf: &Plaf) {
     // BEGIN RAW CONSTRAINTS
     let cell_fmt =
         |f: &mut fmt::Formatter<'_>, c: &Cell| write!(f, "{}", CellDisplay { c, plaf: &plaf });
@@ -284,9 +284,20 @@ fn gen_circuit_plaf<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32, block: 
     }
     */
     // END RAW CONSTRAINTS
-    // write_files(name, &plaf).unwrap();
 }
 
+/*
+fn gen_circuit_plaf<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32, block: &Block<Fr>) {
+    let circuit = C::new_from_block(&block);
+    let mut plaf = get_plaf(k, &circuit).unwrap();
+    name_challanges(&mut plaf);
+    alias_replace(&mut plaf);
+    // transform_to_raw_constraints(&plaf);
+    write_files(name, &plaf).unwrap();
+}
+*/
+
+/*
 fn circuit_plaf_mock_prover<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32) {
     let block = gen_small_block();
 
@@ -303,12 +314,13 @@ fn circuit_plaf_mock_prover<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32)
     let mock_prover = MockProver::<Fr>::run(k, &plaf_circuit, instance).unwrap();
     mock_prover.assert_satisfied_par();
 }
+*/
 
 fn demo_get_plaf() {
-    let block = gen_empty_block();
+    // let block = gen_empty_block();
     // gen_circuit_plaf::<EvmCircuit<Fr>>("evm", 18, &block);
     // gen_circuit_plaf::<StateCircuit<Fr>>("state", 17, &block);
-    gen_circuit_plaf::<TxCircuit<Fr>>("tx", 19, &block);
+    // gen_circuit_plaf::<TxCircuit<Fr>>("tx", 19, &block);
     // gen_circuit_plaf::<BytecodeCircuit<Fr>>("bytecode", 9, &block);
     // gen_circuit_plaf::<CopyCircuit<Fr>>("copy", 9, &block);
     // gen_circuit_plaf::<KeccakCircuit<Fr>>("keccak", 11, &block);
@@ -318,9 +330,12 @@ fn demo_get_plaf() {
 }
 
 fn demo_analysis() {
-    let block = gen_empty_block();
-    let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
-    let k = 9;
+    // let block = gen_empty_block();
+    // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
+    // let k = 9;
+    let k: u32 = 10;
+    let inputs = vec![vec![0x61], vec![0x01, 0x02, 0x03]];
+    let circuit = Sha256BitCircuit::<Fr>::new(Some(2usize.pow(k) - 109usize), inputs, true);
     let mut plaf = get_plaf(k, &circuit).unwrap();
     plaf.simplify();
     name_challanges(&mut plaf);
@@ -364,9 +379,11 @@ fn demo_analysis() {
     }
 }
 
+/*
 fn demo_plaf_halo2() {
     circuit_plaf_mock_prover::<BytecodeCircuit<Fr>>("bytecode", 9);
 }
+*/
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();

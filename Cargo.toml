@@ -9,10 +9,11 @@ edition = "2021"
 num-bigint = { version = "0.4", features = [ "rand" ] }
 num-traits = "0.2"
 polyexen = { path = "../polyexen" }
-zkevm-circuits = { path = "../zkevm-circuits/zkevm-circuits", features = ["test"] }
-bus-mapping = { path = "../zkevm-circuits/bus-mapping", features = ["test"] }
-mock = { path = "../zkevm-circuits/mock" }
-eth-types = { path = "../zkevm-circuits/eth-types" }
+# zkevm-circuits = { path = "../zkevm-circuits/zkevm-circuits", features = ["test"] }
+# bus-mapping = { path = "../zkevm-circuits/bus-mapping", features = ["test"] }
+# mock = { path = "../zkevm-circuits/mock" }
+# eth-types = { path = "../zkevm-circuits/eth-types" }
+zkevm-hashes = { path = "../halo2-lib/hashes/zkevm", default-features = false, features = ["halo2-pse"] }
 # halo2_proofs = "0.2"
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", features = ["circuit-params"], rev = "d3746109d7d38be53afc8ddae8fdfaf1f02ad1d7" }
 env_logger = "0.9"
@@ -21,7 +22,7 @@ convert_case = "0.6.0"
 
 [patch."https://github.com/privacy-scaling-explorations/halo2.git"]
 # halo2_proofs = { path = "../halo2/halo2_proofs" }
-halo2_proofs = { git = "https://github.com/appliedzkp/halo2.git", rev = "d3746109d7d38be53afc8ddae8fdfaf1f02ad1d7" }
+halo2_proofs = { git = "https://github.com/appliedzkp/halo2.git", rev = "7a2165617195d8baa422ca7b2b364cef02380390" }
 # halo2_proofs = { git = "https://github.com/appliedzkp/halo2.git", rev = "4350bceec26c94a53116feef20eba49fe5f819b5" }
 # halo2_proofs = { git = "https://github.com/kilic/halo2.git", rev = "4350bceec26c94a53116feef20eba49fe5f819b5" }
 
@@ -31,3 +32,5 @@ halo2_proofs = { git = "https://github.com/appliedzkp/halo2.git", rev = "d374610
 # [patch.crates-io]
 # halo2_proofs = { path = "../halo2/halo2_proofs" }
 # halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", features = ["circuit-params"], rev = "d3746109d7d38be53afc8ddae8fdfaf1f02ad1d7" }
+[patch.crates-io]
+halo2-base = { path = "../halo2-lib/halo2-base" }
