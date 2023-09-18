@@ -5,14 +5,17 @@ use mock::test_ctx::TestContext;
 use num_bigint::BigUint;
 use polyexen::{
     analyze::{bound_base, find_bounds_poly, Analysis},
-    expr::ExprDisplay,
+    expr::{Expr, ExprDisplay},
     plaf::{
         backends::halo2::PlafH2Circuit,
         frontends::halo2::{gen_witness, get_plaf},
-        Cell, CellDisplay, Plaf, PlafDisplayBaseTOML, PlafDisplayFixedCSV, VarDisplay,
+        Cell, CellDisplay, Lookup, Plaf, PlafDisplayBaseTOML, PlafDisplayFixedCSV, VarDisplay,
     },
 };
-use std::fmt;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 use zkevm_circuits::{
     bytecode_circuit::circuit::BytecodeCircuit,
     copy_circuit::CopyCircuit,
@@ -74,6 +77,13 @@ fn gen_small_block() -> Block<Fr> {
     block
 }
 
+#[derive(Default, Debug)]
+struct VarPointers {
+    polys: Vec<usize>,
+    lookups: Vec<usize>,
+    copys: Vec<usize>,
+}
+
 fn gen_circuit_plaf<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32, block: &Block<Fr>) {
     let circuit = C::new_from_block(&block);
     let mut plaf = get_plaf(k, &circuit).unwrap();
@@ -82,6 +92,8 @@ fn gen_circuit_plaf<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32, block: 
     // BEGIN RAW CONSTRAINTS
     let cell_fmt =
         |f: &mut fmt::Formatter<'_>, c: &Cell| write!(f, "{}", CellDisplay { c, plaf: &plaf });
+    let mut var_map: HashMap<_, VarPointers> = HashMap::new();
+    let mut raw_polys = Vec::new();
     // for offset in 0..16 {
     for offset in 0..plaf.info.num_rows {
         for poly in &plaf.polys {
@@ -90,18 +102,189 @@ fn gen_circuit_plaf<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32, block: 
             if exp.is_zero() {
                 continue;
             }
-            println!(
-                "{} = 0 # {}",
-                ExprDisplay {
-                    e: &exp,
-                    var_fmt: cell_fmt
-                },
-                poly.name,
-            );
+            for var in exp.vars() {
+                let pointers = var_map.entry(var).or_insert(VarPointers::default());
+                pointers.polys.push(raw_polys.len());
+            }
+            raw_polys.push(exp);
+            // println!(
+            //     "{} = 0 # {}",
+            //     ExprDisplay {
+            //         e: &exp,
+            //         var_fmt: cell_fmt
+            //     },
+            //     poly.name,
+            // );
         }
     }
+    let mut raw_lookups = Vec::new();
+    for offset in 0..plaf.info.num_rows {
+        for (lookup_num, lookup) in plaf.lookups.iter().enumerate() {
+            let Lookup { name, exps } = lookup;
+            let exps_lhs: Vec<_> = exps
+                .0
+                .iter()
+                .map(|exp| {
+                    let mut exp = plaf.resolve(&exp, offset);
+                    exp.simplify(&plaf.info.p);
+                    exp
+                })
+                .collect();
+            if exps_lhs.iter().all(|exp| exp.is_zero()) {
+                continue;
+            }
+            for exp in &exps_lhs {
+                for var in exp.vars() {
+                    let pointers = var_map.entry(var).or_insert(VarPointers::default());
+                    pointers.lookups.push(raw_lookups.len());
+                }
+            }
+            raw_lookups.push((exps_lhs, lookup_num));
+            // print!("[");
+            // for (i, exp) in exps_lhs.iter().enumerate() {
+            //     if i != 0 {
+            //         print!(", ")
+            //     }
+            //     print!(
+            //         "{}",
+            //         ExprDisplay {
+            //             e: &exp,
+            //             var_fmt: cell_fmt
+            //         },
+            //     );
+            // }
+            // print!("] in [");
+            // for (i, exp) in exps.1.iter().enumerate() {
+            //     if i != 0 {
+            //         print!(", ")
+            //     }
+            //     print!(
+            //         "{}",
+            //         ExprDisplay {
+            //             e: &exp,
+            //             var_fmt: |f, v| plaf.fmt_var(f, v)
+            //         },
+            //     );
+            // }
+            // println!("] # {}", name);
+        }
+    }
+    let mut raw_copys = Vec::new();
+    for copy in &plaf.copys {
+        let (column_a, column_b) = copy.columns;
+        for offset in &copy.offsets {
+            let cell_a = Cell {
+                column: column_a,
+                offset: offset.0,
+            };
+            let cell_b = Cell {
+                column: column_b,
+                offset: offset.1,
+            };
+            let pointers = var_map.entry(cell_a).or_insert(VarPointers::default());
+            pointers.copys.push(raw_copys.len());
+            let pointers = var_map.entry(cell_b).or_insert(VarPointers::default());
+            pointers.copys.push(raw_copys.len());
+            raw_copys.push((cell_a, cell_b));
+
+            // println!(
+            //     "{} - {}",
+            //     CellDisplay {
+            //         c: &cell_a,
+            //         plaf: &plaf
+            //     },
+            //     CellDisplay {
+            //         c: &cell_b,
+            //         plaf: &plaf
+            //     }
+            // );
+        }
+    }
+    // for (var, pointers) in var_map.iter() {
+    //     print!(
+    //         "{} in ",
+    //         CellDisplay {
+    //             c: var,
+    //             plaf: &plaf
+    //         }
+    //     );
+    //     println!("{:?}", pointers);
+    // }
+    // Collect copy sets (sets of cells that are constrained to be the same value)
+    let mut copy_sets = Vec::new();
+    let mut cleared = HashSet::new();
+    let mut dup_vars_count = 0;
+    for (index, (cell_main, cell_b)) in raw_copys.iter().enumerate() {
+        if cleared.contains(&index) {
+            continue;
+        }
+        cleared.insert(index);
+        let mut next = vec![*cell_b];
+        let mut copy_set = HashSet::new();
+        while let Some(cell) = next.pop() {
+            if cell == *cell_main {
+                continue;
+            }
+            copy_set.insert(cell);
+            if let Some(pointers) = var_map.get(&cell) {
+                for copy_index in &pointers.copys {
+                    if cleared.contains(copy_index) {
+                        continue;
+                    }
+                    cleared.insert(*copy_index);
+                    let (cell_a, cell_b) = raw_copys[*copy_index];
+                    next.push(cell_a);
+                    next.push(cell_b);
+                }
+            }
+        }
+        dup_vars_count += copy_set.len();
+        copy_sets.push((cell_main, copy_set));
+    }
+    println!("dup_vars_count={}", dup_vars_count);
+    // Apply copy constraint replacements
+    for (cell_main, copy_set) in &copy_sets {
+        for cell in copy_set {
+            if let Some(pointers) = var_map.get(cell) {
+                for poly_index in &pointers.polys {
+                    let poly = raw_polys.get_mut(*poly_index).unwrap();
+                    poly.replace_var(cell, &Expr::Var(**cell_main));
+                }
+                for lookup_index in &pointers.lookups {
+                    let lookup = raw_lookups.get_mut(*lookup_index).unwrap();
+                    for exp in lookup.0.iter_mut() {
+                        exp.replace_var(cell, &Expr::Var(**cell_main));
+                    }
+                }
+            }
+        }
+    }
+    /*
+    for copy in &copy_sets {
+        print!(
+            "{} <- [",
+            CellDisplay {
+                c: copy.0,
+                plaf: &plaf
+            }
+        );
+        for (i, copy_cell) in copy.1.iter().enumerate() {
+            if i != 0 {
+                print!(", ");
+            }
+            print!(
+                "{}",
+                CellDisplay {
+                    c: copy_cell,
+                    plaf: &plaf
+                }
+            );
+        }
+        println!("]");
+    }
+    */
     // END RAW CONSTRAINTS
-    write_files(name, &plaf).unwrap();
+    // write_files(name, &plaf).unwrap();
 }
 
 fn circuit_plaf_mock_prover<C: Circuit<Fr> + SubCircuit<Fr>>(name: &str, k: u32) {
