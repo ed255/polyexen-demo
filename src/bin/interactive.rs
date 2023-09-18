@@ -523,6 +523,9 @@ fn print_polys(ctx: &Context, offset_str: &str) {
     }
     for poly in &ctx.plaf.polys {
         let exp = ctx.eval_partial(&poly.exp, offset);
+        if exp.is_zero() {
+            continue;
+        }
         // exp.normalize(p);
         println!("\"{}\"", poly.name);
         // println!(
@@ -578,13 +581,19 @@ fn print_table(ctx: &Context, offset_str: &str) {
     let offset = usize::from_str_radix(offset_str, 10).unwrap();
     let mut column_names = Vec::new();
     column_names.push("#".to_string());
+    let skip_pattern = ".b";
+    let mut skip_witnes_indexes = Vec::new();
     for column in &ctx.plaf.columns.fixed {
         column_names.push(column.name().clone());
     }
     for column in &ctx.plaf.columns.public {
         column_names.push(column.name().clone());
     }
-    for column in &ctx.plaf.columns.witness {
+    for (i, column) in ctx.plaf.columns.witness.iter().enumerate() {
+        if column.name().contains(skip_pattern) {
+            skip_witnes_indexes.push(i);
+            continue;
+        }
         column_names.push(column.name().clone());
     }
     let mut table = DisplayTable::new(column_names.into());
@@ -625,12 +634,15 @@ fn print_table(ctx: &Context, offset_str: &str) {
             row_names.push(query_names_fixed[index][row - offset].clone());
         }
         for index in 0..ctx.plaf.columns.witness.len() {
+            if skip_witnes_indexes.contains(&index) {
+                continue;
+            }
             row_names.push(query_names_witness[index][row - offset].clone());
         }
         table.push_row(row_names);
 
         let mut row_values = Vec::new();
-        row_values.push(Some(format!("{:x}", row)));
+        row_values.push(Some(format!("{}", row)));
         for index in 0..ctx.plaf.columns.fixed.len() {
             row_values.push(Some(
                 ctx.plaf.fixed[index][row]
@@ -648,6 +660,9 @@ fn print_table(ctx: &Context, offset_str: &str) {
             );
         }
         for index in 0..ctx.plaf.columns.witness.len() {
+            if skip_witnes_indexes.contains(&index) {
+                continue;
+            }
             if let Some(f) = &ctx.witness.witness[index][row] {
                 row_values.push(Some(format!("{:x}", f)));
                 continue;
