@@ -1,4 +1,18 @@
-# Set is_enabled for first chunk
-s w6d[71] 1
-# Set length = 5 for first chunk
-s w6f[71] 5
+# let inputs = vec![vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]];
+s is_final[5] 1
+s len[5] 4
+s len[6] 4
+s len[7] 4
+s len[8] 4
+s len[9] 4
+s len[10] 4
+s len[11] 4
+s len[12] 4
+s len[13] 4
+s len[14] 4
+s len[15] 4
+s len[16] 4
+s len[17] 4
+s len[18] 4
+s len[19] 4
+s len[71] 4

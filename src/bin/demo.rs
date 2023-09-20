@@ -327,6 +327,14 @@ fn demo_get_plaf() {
     // gen_circuit_plaf::<ExpCircuit<Fr>>("exp", 10, &block);
     // gen_circuit_plaf::<PiCircuit<Fr>>("pi", 17, &block);
     // gen_circuit_plaf::<SuperCircuit<Fr>>("super", 19, &block);
+    let k: u32 = 10;
+    let inputs = vec![vec![0x61], vec![0x01, 0x02, 0x03]];
+    let circuit = Sha256BitCircuit::<Fr>::new(Some(2usize.pow(k) - 109usize), inputs, false);
+    let mut plaf = get_plaf(k, &circuit).unwrap();
+    // name_challanges(&mut plaf);
+    // alias_replace(&mut plaf);
+    // transform_to_raw_constraints(&plaf);
+    write_files("sha256", &plaf).unwrap();
 }
 
 fn demo_analysis() {

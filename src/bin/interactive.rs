@@ -1,3 +1,5 @@
+#![feature(box_patterns)]
+
 use halo2_proofs::halo2curves::bn256::Fr;
 use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
@@ -6,7 +8,10 @@ use polyexen::{
         bound_base, find_bounds_poly, solve_ranged_linear_comb, to_biguint, Analysis, Attrs, Bound,
     },
     expr::{Column, ColumnKind, ColumnQuery, Expr, ExprDisplay, PlonkVar as Var},
-    plaf::{frontends::halo2::get_plaf, AliasMap, Cell, CellDisplay, Lookup, Plaf, Witness},
+    plaf::{
+        frontends::halo2::{gen_witness, get_plaf},
+        AliasMap, Cell, CellDisplay, Lookup, Plaf, Poly, Witness,
+    },
 };
 use rustyline::{error::ReadlineError, DefaultEditor, Result};
 use std::{
@@ -15,6 +20,7 @@ use std::{
     env, fmt,
     fs::File,
     io::{self, BufRead, BufReader},
+    str::FromStr,
 };
 /*
 use zkevm_circuits::{
@@ -59,8 +65,8 @@ struct LookupSrcRef {
 }
 
 impl PolyRef {
-    fn get<'a>(&self, plaf: &'a Plaf) -> (usize, &'a Expr<Var>) {
-        (self.offset, &plaf.polys[self.index].exp)
+    fn get<'a>(&self, plaf: &'a Plaf) -> (usize, &'a Poly) {
+        (self.offset, &plaf.polys[self.index])
     }
 }
 
@@ -77,10 +83,10 @@ struct Context {
 }
 
 impl Context {
-    fn new(plaf: Plaf) -> Self {
+    fn new(plaf: Plaf, witness: Option<Witness>) -> Self {
         let p = &plaf.info.p;
         let analysis = Analysis::new();
-        let witness = plaf.gen_empty_witness();
+        let witness = witness.unwrap_or_else(|| plaf.gen_empty_witness());
         let bound_default = bound_base(p);
         let alias_map = plaf.alias_map();
         let mut ctx = Context {
@@ -162,7 +168,7 @@ impl Context {
         let mut map = HashMap::new();
         for offset in 0..self.plaf.info.num_rows {
             for (index, poly) in self.plaf.polys.iter().enumerate() {
-                let exp = self.eval_partial(&poly.exp, offset);
+                let exp = self.eval_partial::<false>(&poly.exp, offset);
                 let vars = exp.vars();
                 let poly_ref = PolyRef { offset, index };
                 for var in vars {
@@ -180,7 +186,7 @@ impl Context {
         for offset in 0..self.plaf.info.num_rows {
             for (index, lookup) in self.plaf.lookups.iter().enumerate() {
                 for (expr_index, expr) in lookup.exps.0.iter().enumerate() {
-                    let exp = self.eval_partial(&expr, offset);
+                    let exp = self.eval_partial::<false>(&expr, offset);
                     let vars = exp.vars();
                     let lookup_ref = LookupSrcRef {
                         offset,
@@ -198,24 +204,31 @@ impl Context {
         map
     }
 
-    fn eval_partial(&self, exp: &Expr<Var>, offset: usize) -> Expr<Cell> {
+    fn eval_partial<const WITNESS: bool>(&self, exp: &Expr<Var>, offset: usize) -> Expr<Cell> {
         let p = &self.plaf.info.p;
-        let mut exp = self
-            .plaf
-            .eval_partial(exp, &|v, o| self.resolve_var::<true>(v, o), offset);
+        let mut exp =
+            self.plaf
+                .eval_partial(exp, &|v, o| self.resolve_var::<WITNESS>(v, o), offset);
         exp.simplify(p);
         exp
     }
 
-    fn analyze_poly(&self, offset: usize, exp: &Expr<Var>) -> HashSet<Cell> {
+    fn analyze_poly(&self, offset: usize, poly: &Poly) -> HashSet<Cell> {
         let p = &self.plaf.info.p;
-        let mut exp = self.eval_partial(exp, offset);
+        let mut exp = self.eval_partial::<true>(&poly.exp, offset);
         if exp.is_zero() {
             return HashSet::new();
         }
-        if let Expr::Const(_f) = &exp {
-            // TODO: Add more details
-            println!("Warning: Poly constraint not satisfied");
+        if matches!(exp, Expr::Const(_)) || matches!(exp, Expr::Neg(box Expr::Const(_))) {
+            println!(
+                "WARNING: Poly constraint not satisfied at offset {}: \"{}\":\n  {}",
+                offset,
+                poly.name,
+                ExprDisplay {
+                    e: &poly.exp,
+                    var_fmt: |f, v| { self.plaf.fmt_var(f, &v) }
+                }
+            );
         }
         let update1 = find_bounds_poly(&exp, p, &mut *self.analysis.borrow_mut());
         let update2 = solve_ranged_linear_comb(&exp, p, &mut *self.analysis.borrow_mut());
@@ -236,8 +249,9 @@ impl Context {
             for cell in &set {
                 if let Some(poly_refs) = self.cell_expr_map.get(cell) {
                     for poly_ref in poly_refs {
-                        let (offset, exp) = poly_ref.get(&self.plaf);
-                        new_set.extend(self.analyze_poly(offset, exp).into_iter());
+                        let (offset, poly) = poly_ref.get(&self.plaf);
+                        // println!("DBG analyze poly {}", poly.exp);
+                        new_set.extend(self.analyze_poly(offset, poly).into_iter());
                     }
                 }
             }
@@ -256,7 +270,7 @@ impl Context {
                 .exps
                 .1
                 .iter()
-                .map(|e| self.eval_partial(e, offset))
+                .map(|e| self.eval_partial::<true>(e, offset))
                 .enumerate()
             {
                 if let Expr::Const(f) = exp {
@@ -272,7 +286,7 @@ impl Context {
                 .exps
                 .0
                 .iter()
-                .map(|e| self.eval_partial(e, offset))
+                .map(|e| self.eval_partial::<true>(e, offset))
                 .enumerate()
             {
                 let mut col_match_rows = vec![false; num_rows];
@@ -302,7 +316,9 @@ impl Context {
                         .iter()
                         .map(|row| dst_table[exp_index][*row].clone()),
                 );
-                if let Expr::Var(cell) = self.eval_partial(&lookup.exps.0[exp_index], offset) {
+                if let Expr::Var(cell) =
+                    self.eval_partial::<true>(&lookup.exps.0[exp_index], offset)
+                {
                     self.analysis
                         .borrow_mut()
                         .vars_attrs
@@ -315,7 +331,7 @@ impl Context {
     fn analyze_all(&mut self) {
         for offset in 0..self.plaf.info.num_rows {
             for poly in &self.plaf.polys {
-                self.analyze_poly(offset, &poly.exp);
+                self.analyze_poly(offset, &poly);
             }
         }
         for lookup in &self.plaf.lookups {
@@ -351,8 +367,22 @@ fn alias_replace(plaf: &mut Plaf) {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let k: u32 = 10;
-    let inputs = vec![vec![0x61], vec![0x01, 0x02, 0x03]];
+    let k: u32 = 9;
+    // Empty input
+    // let inputs = vec![vec![]];
+    // let inputs = vec![vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66]];
+    // although we have less than 512 bits, due to padding this requires two chunks.
+    // let inputs = vec![(0..62).collect()];
+    // Only 1 word
+    // let inputs = vec![vec![0x11, 0x22, 0x33, 0x44]];
+    // bug1
+    let inputs = vec![vec![0x11, 0x22, 0x33, 0x44, 0x00, 0x00, 0x00, 0x00]];
+    // Only 2 words
+    // let inputs = vec![vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]];
+    // One word and a half
+    // let inputs = vec![vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]];
+    // 16 inputs of 0xff to reach max value of w[16..64]
+    // let inputs = vec![vec![0xff; 16 * 4]];
     let circuit = Sha256BitCircuit::<Fr>::new(Some(2usize.pow(k) - 109usize), inputs, false);
     // let block = gen_empty_block();
     // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
@@ -370,7 +400,9 @@ fn main() {
     alias_replace(&mut plaf);
     plaf.simplify();
     name_challanges(&mut plaf);
-    let mut ctx = Context::new(plaf);
+    let witness = Some(gen_witness(k, &circuit, &plaf, vec![], vec![]).unwrap());
+    // let witness = None;
+    let mut ctx = Context::new(plaf, witness);
     // ctx.analyze();
     // for (cell, attrs) in &analysis.vars_attrs {
     //     if attrs.bound == bound_base {
@@ -516,13 +548,25 @@ fn print_polys(ctx: &Context, offset_str: &str) {
         |f: &mut fmt::Formatter<'_>, c: &Cell| write!(f, "{}", CellDisplay { c, plaf: &ctx.plaf });
     let mut query_names: HashMap<ColumnQuery, String> = HashMap::new();
     for (selector, map) in &ctx.plaf.metadata.query_names {
-        let s = ctx.eval_partial(selector, offset);
+        let s = ctx.eval_partial::<true>(selector, offset);
         if s.is_const_not_zero() {
             query_names.extend(map.clone().into_iter());
         }
     }
+    let skip_patterns = [
+        "w bit boolean",
+        "a bit boolean",
+        "e bit boolean",
+        "is_padding boolean",
+    ];
     for poly in &ctx.plaf.polys {
-        let exp = ctx.eval_partial(&poly.exp, offset);
+        if skip_patterns
+            .iter()
+            .any(|skip_pattern| poly.name.contains(skip_pattern))
+        {
+            continue;
+        }
+        let exp = ctx.eval_partial::<true>(&poly.exp, offset);
         if exp.is_zero() {
             continue;
         }
@@ -602,7 +646,7 @@ fn print_table(ctx: &Context, offset_str: &str) {
     let mut query_names_witness = vec![vec![String::new(); N_ROWS]; ctx.plaf.columns.witness.len()];
     for row in offset.saturating_sub(N_ROWS)..offset + N_ROWS {
         for (selector, map) in &ctx.plaf.metadata.query_names {
-            let s = ctx.eval_partial(selector, row);
+            let s = ctx.eval_partial::<true>(selector, row);
             if s.is_const_not_zero() {
                 for (q, name) in map.iter() {
                     let ColumnQuery { column, rotation } = q;
@@ -628,6 +672,9 @@ fn print_table(ctx: &Context, offset_str: &str) {
         }
     }
     for row in offset..offset + N_ROWS {
+        if row >= ctx.plaf.info.num_rows {
+            continue;
+        }
         let mut row_names = Vec::new();
         row_names.push(String::new());
         for index in 0..ctx.plaf.columns.fixed.len() {
@@ -699,7 +746,8 @@ fn set_witness(ctx: &mut Context, cell_str: &str, val_str: &str) {
     let val = if val_str == "?" {
         None
     } else {
-        Some(u64::from_str_radix(val_str, 10).unwrap())
+        // Some(u64::from_str_radix(val_str, 10).unwrap())
+        Some(BigUint::from_str(val_str).unwrap())
     };
     let (name_str, offset_str) = cell_str
         .split_once('[')
@@ -713,7 +761,7 @@ fn set_witness(ctx: &mut Context, cell_str: &str, val_str: &str) {
                 rotation: _,
             }) => match column.kind {
                 ColumnKind::Witness => {
-                    ctx.witness.witness[column.index][offset] = val.map(|v| BigUint::from(v));
+                    ctx.witness.witness[column.index][offset] = val;
                     ctx.analyze(
                         [Cell {
                             column: column.clone(),
