@@ -13,8 +13,9 @@ use polyexen::{
         AliasMap, Cell, CellDisplay, Lookup, Plaf, Poly, Witness,
     },
 };
-use rustyline::{error::ReadlineError, DefaultEditor, Result};
+use rustyline::{error::ReadlineError, DefaultEditor};
 use std::{
+    self,
     cell::RefCell,
     collections::{HashMap, HashSet},
     env, fmt,
@@ -80,6 +81,10 @@ struct Context {
     analysis: RefCell<Analysis<Cell>>,
     witness: Witness,
     bound_default: Bound,
+    // Cells defined by the user to be inputs to the circuit
+    input_set: HashSet<Cell>,
+    // Cells defined by the user to be outputs to the circuit
+    output_set: HashSet<Cell>,
 }
 
 impl Context {
@@ -97,6 +102,8 @@ impl Context {
             analysis: RefCell::new(analysis),
             witness,
             bound_default,
+            input_set: HashSet::new(),
+            output_set: HashSet::new(),
         };
         ctx.cell_expr_map = ctx.cell_expr_map();
         ctx.cell_lookup_src_map = ctx.cell_lookup_src_map();
@@ -224,10 +231,7 @@ impl Context {
                 "WARNING: Poly constraint not satisfied at offset {}: \"{}\":\n  {}",
                 offset,
                 poly.name,
-                ExprDisplay {
-                    e: &poly.exp,
-                    var_fmt: |f, v| { self.plaf.fmt_var(f, &v) }
-                }
+                self.disp_expr_cell(&exp)
             );
         }
         let update1 = find_bounds_poly(&exp, p, &mut *self.analysis.borrow_mut());
@@ -339,6 +343,37 @@ impl Context {
         }
         // println!("DBG2 {}", self.analysis.borrow().vars_attrs.len());
     }
+
+    fn cell_fmt(&self, f: &mut fmt::Formatter<'_>, c: &Cell) -> Result<(), fmt::Error> {
+        write!(
+            f,
+            "{}",
+            CellDisplay {
+                c,
+                plaf: &self.plaf
+            }
+        )
+    }
+
+    fn disp_expr_cell<'a>(
+        &'a self,
+        exp: &'a Expr<Cell>,
+    ) -> ExprDisplay<Cell, impl Fn(&mut fmt::Formatter, &Cell) -> Result<(), fmt::Error> + 'a> {
+        ExprDisplay {
+            e: &exp,
+            var_fmt: |f, v| self.cell_fmt(f, &v),
+        }
+    }
+
+    fn disp_expr_plonk<'a>(
+        &'a self,
+        exp: &'a Expr<Var>,
+    ) -> ExprDisplay<Var, impl Fn(&mut fmt::Formatter, &Var) -> Result<(), fmt::Error> + 'a> {
+        ExprDisplay {
+            e: &exp,
+            var_fmt: |f, v| self.plaf.fmt_var(f, &v),
+        }
+    }
 }
 
 fn alias_replace(plaf: &mut Plaf) {
@@ -367,7 +402,7 @@ fn alias_replace(plaf: &mut Plaf) {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let k: u32 = 9;
+    let k: u32 = 8;
     // Empty input
     // let inputs = vec![vec![]];
     // let inputs = vec![vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66]];
@@ -376,13 +411,17 @@ fn main() {
     // Only 1 word
     // let inputs = vec![vec![0x11, 0x22, 0x33, 0x44]];
     // bug1
-    let inputs = vec![vec![0x11, 0x22, 0x33, 0x44, 0x00, 0x00, 0x00, 0x00]];
+    // let inputs = vec![vec![0x01, 0x02, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00]];
+    // let inputs = vec![vec![0x01, 0x02, 0x03, 0x04]];
     // Only 2 words
     // let inputs = vec![vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]];
     // One word and a half
     // let inputs = vec![vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]];
     // 16 inputs of 0xff to reach max value of w[16..64]
     // let inputs = vec![vec![0xff; 16 * 4]];
+    // 5 chunks
+    // let inputs = vec![(0u32..(16 * 4 * 4 - 4)).map(|_| 1u8).collect()];
+    let inputs = vec![vec![1u8; 60]];
     let circuit = Sha256BitCircuit::<Fr>::new(Some(2usize.pow(k) - 109usize), inputs, false);
     // let block = gen_empty_block();
     // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
@@ -426,8 +465,12 @@ fn main() {
     if args.len() == 2 {
         let filename = &args[1];
         let file = File::open(filename).unwrap();
+        println!("Processing input file {}", filename);
         for line in io::BufReader::new(file).lines() {
-            run(&mut ctx, line.unwrap().as_str());
+            let line = line.unwrap();
+            let line_str = line.as_str();
+            println!("> {}", line_str);
+            run(&mut ctx, line_str);
         }
     }
 
@@ -515,13 +558,7 @@ fn print_lookups(ctx: &Context, offset_str: &str) {
             if i != 0 {
                 print!(", ");
             }
-            print!(
-                "{}",
-                ExprDisplay {
-                    e: &exp,
-                    var_fmt: |f, v| ctx.plaf.fmt_var(f, v)
-                }
-            );
+            print!("{}", ctx.disp_expr_plonk(exp));
         }
         println!("}}");
         print!("ori0 dst: {{");
@@ -529,13 +566,7 @@ fn print_lookups(ctx: &Context, offset_str: &str) {
             if i != 0 {
                 print!(", ");
             }
-            print!(
-                "{}",
-                ExprDisplay {
-                    e: &exp,
-                    var_fmt: |f, v| ctx.plaf.fmt_var(f, v)
-                }
-            );
+            print!("{}", ctx.disp_expr_plonk(exp));
         }
         println!("}}");
     }
@@ -544,8 +575,6 @@ fn print_lookups(ctx: &Context, offset_str: &str) {
 fn print_polys(ctx: &Context, offset_str: &str) {
     let offset = usize::from_str_radix(offset_str, 10).unwrap();
     let p = &ctx.plaf.info.p;
-    let cell_fmt =
-        |f: &mut fmt::Formatter<'_>, c: &Cell| write!(f, "{}", CellDisplay { c, plaf: &ctx.plaf });
     let mut query_names: HashMap<ColumnQuery, String> = HashMap::new();
     for (selector, map) in &ctx.plaf.metadata.query_names {
         let s = ctx.eval_partial::<true>(selector, offset);
@@ -574,10 +603,7 @@ fn print_polys(ctx: &Context, offset_str: &str) {
         println!("\"{}\"", poly.name);
         // println!(
         //     "  ori0: {}",
-        //     ExprDisplay {
-        //         e: &poly.exp,
-        //         var_fmt: |f, v| ctx.plaf.fmt_var(f, v)
-        //     },
+        //     ctx.disp_expr_cell(&exp)
         // );
         println!(
             "  ori1: {}",
@@ -596,10 +622,7 @@ fn print_polys(ctx: &Context, offset_str: &str) {
         );
         // println!(
         //     "  res0: {}",
-        //     ExprDisplay {
-        //         e: &exp,
-        //         var_fmt: cell_fmt
-        //     }
+        //     ctx.disp_expr_cell(&exp)
         // );
         println!(
             "  res1: {}",
@@ -614,7 +637,7 @@ fn print_polys(ctx: &Context, offset_str: &str) {
                         write!(f, "{}", name)?;
                         return Ok(());
                     }
-                    cell_fmt(f, &v)
+                    ctx.cell_fmt(f, &v)
                 }
             }
         );
@@ -695,7 +718,7 @@ fn print_table(ctx: &Context, offset_str: &str) {
                 ctx.plaf.fixed[index][row]
                     .clone()
                     .map(|v| format!("{:x}", v))
-                    .unwrap_or_else(|| format!("-")),
+                    .unwrap_or_else(|| format!("0")),
             ));
         }
         for index in 0..ctx.plaf.columns.public.len() {
@@ -742,13 +765,7 @@ fn print_table(ctx: &Context, offset_str: &str) {
     table.print();
 }
 
-fn set_witness(ctx: &mut Context, cell_str: &str, val_str: &str) {
-    let val = if val_str == "?" {
-        None
-    } else {
-        // Some(u64::from_str_radix(val_str, 10).unwrap())
-        Some(BigUint::from_str(val_str).unwrap())
-    };
+fn get_cell_from_str(ctx: &Context, cell_str: &str) -> Option<Cell> {
     let (name_str, offset_str) = cell_str
         .split_once('[')
         .map(|(name, offset)| (name, &offset[..offset.len() - 1]))
@@ -759,26 +776,368 @@ fn set_witness(ctx: &mut Context, cell_str: &str, val_str: &str) {
             Var::Query(ColumnQuery {
                 column,
                 rotation: _,
-            }) => match column.kind {
-                ColumnKind::Witness => {
-                    ctx.witness.witness[column.index][offset] = val;
-                    ctx.analyze(
-                        [Cell {
-                            column: column.clone(),
-                            offset,
-                        }]
-                        .into_iter()
-                        .collect(),
-                    );
-                }
-                ColumnKind::Public => unimplemented!(),
-                _ => unreachable!(),
-            },
+            }) => {
+                return Some(Cell {
+                    column: column.clone(),
+                    offset,
+                });
+            }
             _ => unreachable!(),
         }
     } else {
         println!("Error: column \"{}\" not found", name_str);
+        return None;
     }
+}
+
+fn set_witness(ctx: &mut Context, cell_str: &str, val_str: &str) {
+    let val = if val_str == "?" {
+        None
+    } else {
+        // Some(u64::from_str_radix(val_str, 10).unwrap())
+        Some(BigUint::from_str(val_str).unwrap())
+    };
+    if let Some(cell) = get_cell_from_str(&ctx, cell_str) {
+        match cell.column.kind {
+            ColumnKind::Witness => {
+                ctx.witness.witness[cell.column.index][cell.offset] = val;
+                ctx.analyze([cell].into_iter().collect());
+            }
+            ColumnKind::Public => unimplemented!(),
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn set_input(ctx: &mut Context, cell_str: &str) {
+    if let Some(cell) = get_cell_from_str(&ctx, cell_str) {
+        ctx.input_set.insert(cell);
+    }
+}
+
+fn set_output(ctx: &mut Context, cell_str: &str) {
+    if let Some(cell) = get_cell_from_str(&ctx, cell_str) {
+        ctx.output_set.insert(cell);
+    }
+}
+
+fn unused_rows(ctx: &mut Context, from_str: &str, to_str: &str) {
+    let from_offset = usize::from_str(from_str).unwrap();
+    let to_offset = usize::from_str(to_str).unwrap();
+
+    println!(
+        "# Used cells in inactive rows from {} to {}",
+        from_offset, to_offset
+    );
+    for column_index in 0..ctx.plaf.columns.witness.len() {
+        for offset in from_offset..=to_offset {
+            let cell = Cell {
+                column: Column {
+                    kind: ColumnKind::Witness,
+                    index: column_index,
+                },
+                offset,
+            };
+            if let Some(poly_refs) = ctx.cell_expr_map.get(&cell) {
+                for poly_ref in poly_refs {
+                    let (poly_offset, poly) = poly_ref.get(&ctx.plaf);
+                    let exp = ctx.eval_partial::<true>(&poly.exp, poly_offset);
+                    // Skip whenever the partial evaluated expression doesn't contain the cell
+                    // variable anymore.
+                    if !exp.vars().contains(&cell) {
+                        continue;
+                    }
+                    if exp.is_zero() {
+                        continue;
+                    }
+                    println!("\"{}\"\n  {}", poly.name, ctx.disp_expr_cell(&exp));
+                }
+            }
+        }
+    }
+}
+
+fn cell_used(ctx: &mut Context, cell_str: &str) {
+    if let Some(cell) = get_cell_from_str(&ctx, cell_str) {
+        if let Some(poly_refs) = ctx.cell_expr_map.get(&cell) {
+            for poly_ref in poly_refs {
+                let (poly_offset, poly) = poly_ref.get(&ctx.plaf);
+                let exp = ctx.eval_partial::<true>(&poly.exp, poly_offset);
+                // Skip whenever the partial evaluated expression doesn't contain the cell
+                // variable anymore.
+                if !exp.vars().contains(&cell) {
+                    continue;
+                }
+                if exp.is_zero() {
+                    continue;
+                }
+                println!("\"{}\"\n  {}", poly.name, ctx.disp_expr_cell(&exp));
+            }
+        }
+    }
+}
+
+fn free_cells(ctx: &Context) {
+    let skip_patterns = [
+        "w bit boolean",
+        "a bit boolean",
+        "e bit boolean",
+        "is_padding boolean",
+    ];
+
+    println!("# Free cells (not used in any non-zero constraint):");
+    for column_index in 0..ctx.plaf.columns.witness.len() {
+        // Map from (cell) -> [offsets with no constraints]
+        let mut cell_poly_map_offsets = HashMap::new();
+        for offset in 0..ctx.plaf.info.num_rows {
+            let cell = Cell {
+                column: Column {
+                    kind: ColumnKind::Witness,
+                    index: column_index,
+                },
+                offset,
+            };
+            // Skip cells manually set as witness
+            if ctx.witness.witness[column_index][offset].is_some() {
+                // println!("DBG set {}", offset);
+                continue;
+            }
+            // Skip cells that have a single possible value after bounds analysis
+            if let Some(attrs) = ctx.analysis.borrow().vars_attrs.get(&cell) {
+                if attrs.bound != ctx.bound_default {
+                    if attrs.bound.unique().is_some() {
+                        // println!("DBG analyzed {}", offset);
+                        continue;
+                    }
+                }
+            }
+            let mut is_free = true;
+            if let Some(poly_refs) = ctx.cell_expr_map.get(&cell) {
+                for poly_ref in poly_refs {
+                    let (poly_offset, poly) = poly_ref.get(&ctx.plaf);
+                    if skip_patterns
+                        .iter()
+                        .any(|skip_pattern| poly.name.contains(skip_pattern))
+                    {
+                        continue;
+                    }
+
+                    let exp = ctx.eval_partial::<true>(&poly.exp, poly_offset);
+                    // println!(
+                    //     "DBG {} {} {}",
+                    //     offset,
+                    //     poly.name,
+                    //     ctx.disp_expr_cell(&exp)
+                    // );
+                    // Skip whenever the partial evaluated expression doesn't contain the cell
+                    // variable anymore.
+                    if !exp.vars().contains(&cell) {
+                        continue;
+                    }
+                    if !exp.is_zero() {
+                        is_free = false;
+                        break;
+                    }
+                }
+            }
+            if is_free {
+                // print!(
+                //     "ALERT: non-i/o cell {} only used in one nonzero-constraint: ",
+                //     CellDisplay {
+                //         c: &cell,
+                //         plaf: &ctx.plaf
+                //     }
+                // );
+                // let (poly_offset, poly, _exp) = &nonzero_exps[0];
+                // println!(
+                //     "\"{}\"",
+                //     poly.name,
+                //     // ctx.disp_expr_cell(&exp)
+                // );
+                cell_poly_map_offsets
+                    .entry(column_index)
+                    .and_modify(|offsets: &mut Vec<usize>| {
+                        offsets.push(offset);
+                    })
+                    .or_insert(vec![offset]);
+            }
+        }
+        for (column_index, offsets) in cell_poly_map_offsets.iter() {
+            print!(
+                "column {} at offsets ",
+                ctx.plaf.columns.witness[*column_index].name(),
+            );
+            print_array_ranges(&offsets);
+            println!();
+        }
+    }
+}
+
+fn analyze_io(ctx: &Context) {
+    let skip_patterns = [
+        "w bit boolean",
+        "a bit boolean",
+        "e bit boolean",
+        "is_padding boolean",
+    ];
+
+    println!("# i/o not used in any non-zero constraint:");
+    for cell in ctx.input_set.iter().chain(ctx.output_set.iter()) {
+        if let Some(poly_refs) = ctx.cell_expr_map.get(cell) {
+            let mut zero_exps = Vec::new();
+            let mut nonzero_exps_len = 0;
+            for poly_ref in poly_refs {
+                let (offset, poly) = poly_ref.get(&ctx.plaf);
+                if skip_patterns
+                    .iter()
+                    .any(|skip_pattern| poly.name.contains(skip_pattern))
+                {
+                    continue;
+                }
+                nonzero_exps_len += 1;
+
+                let exp = ctx.eval_partial::<true>(&poly.exp, offset);
+                if exp.is_zero() {
+                    zero_exps.push(poly);
+                }
+            }
+            if nonzero_exps_len == 0 {
+                println!(
+                    "ALERT: i/o cell {} only used in zero-constraints:",
+                    CellDisplay {
+                        c: cell,
+                        plaf: &ctx.plaf
+                    }
+                );
+                for poly in &zero_exps {
+                    println!("  - \"{}\"", poly.name);
+                }
+            }
+        } else {
+            println!(
+                "ALERT: i/o cell {} not used in any poly gate",
+                CellDisplay {
+                    c: cell,
+                    plaf: &ctx.plaf
+                }
+            );
+        }
+    }
+
+    println!("# Non-i/o cells used in only one non-zero constraint:");
+    for column_index in 0..ctx.plaf.columns.witness.len() {
+        // Map from (cell, poly_ref) -> [offsets with a single constraint]
+        let mut cell_poly_map_offsets = HashMap::new();
+        for offset in 0..ctx.plaf.info.num_rows {
+            let cell = Cell {
+                column: Column {
+                    kind: ColumnKind::Witness,
+                    index: column_index,
+                },
+                offset,
+            };
+            // Skip i/o cells
+            if ctx.input_set.contains(&cell) || ctx.output_set.contains(&cell) {
+                continue;
+            }
+            // Skip cells manually set as witness
+            if ctx.witness.witness[column_index][offset].is_some() {
+                continue;
+            }
+            // Skip cells that have a single possible value after bounds analysis
+            if let Some(attrs) = ctx.analysis.borrow().vars_attrs.get(&cell) {
+                if attrs.bound != ctx.bound_default {
+                    if attrs.bound.unique().is_some() {
+                        continue;
+                    }
+                }
+            }
+            let mut nonzero_exps = Vec::new();
+            if let Some(poly_refs) = ctx.cell_expr_map.get(&cell) {
+                for poly_ref in poly_refs {
+                    let (poly_offset, poly) = poly_ref.get(&ctx.plaf);
+                    if skip_patterns
+                        .iter()
+                        .any(|skip_pattern| poly.name.contains(skip_pattern))
+                    {
+                        continue;
+                    }
+
+                    let exp = ctx.eval_partial::<true>(&poly.exp, poly_offset);
+                    // Skip whenever the partial evaluated expression doesn't contain the cell
+                    // variable anymore.
+                    if !exp.vars().contains(&cell) {
+                        continue;
+                    }
+                    if !exp.is_zero() {
+                        nonzero_exps.push((poly_offset, poly, exp));
+                    }
+                }
+            }
+            if nonzero_exps.len() == 1 {
+                // print!(
+                //     "ALERT: non-i/o cell {} only used in one nonzero-constraint: ",
+                //     CellDisplay {
+                //         c: &cell,
+                //         plaf: &ctx.plaf
+                //     }
+                // );
+                let (poly_offset, poly, _exp) = &nonzero_exps[0];
+                // println!(
+                //     "\"{}\"",
+                //     poly.name,
+                //     // ctx.disp_expr_cell(&exp)
+                // );
+                cell_poly_map_offsets
+                    .entry((column_index, poly.name.clone()))
+                    .and_modify(|(offsets, poly_offsets): &mut (Vec<usize>, Vec<usize>)| {
+                        offsets.push(offset);
+                        poly_offsets.push(*poly_offset);
+                    })
+                    .or_insert((vec![offset], vec![*poly_offset]));
+            }
+        }
+        for ((column_index, poly_name), (offsets, poly_offsets)) in cell_poly_map_offsets.iter() {
+            print!(
+                "column {} by \"{}\" at offsets ",
+                ctx.plaf.columns.witness[*column_index].name(),
+                poly_name,
+            );
+            print_array_ranges(&offsets);
+            print!(" by poly_offsets ");
+            print_array_ranges(&poly_offsets);
+            println!();
+        }
+    }
+}
+
+fn print_array_ranges(values: &[usize]) {
+    let mut prev_value = values[0] + 1;
+    let mut skipped = 0;
+    print!("[");
+    for (i, value) in values.iter().enumerate() {
+        if i == 0 {
+            print!("{}", value);
+            prev_value = *value;
+            continue;
+        }
+        if *value == prev_value + 1 {
+            skipped += 1;
+        } else {
+            if skipped > 0 {
+                print!("-{}, ", prev_value);
+            } else {
+                print!(", ");
+            }
+            print!("{}", value);
+            skipped = 0;
+        }
+        prev_value = *value;
+    }
+    if skipped > 0 {
+        print!("-{}", prev_value);
+    }
+    print!("]");
 }
 
 fn run(ctx: &mut Context, line: &str) {
@@ -814,6 +1173,35 @@ fn run(ctx: &mut Context, line: &str) {
         print_lookups(&ctx, args[0]);
     } else if cmd == &"a" || cmd == &"analyze" {
         ctx.analyze_all();
+    } else if cmd == &"in" {
+        if args.len() != 1 {
+            println!("Error: Invalid args: {:?}", args);
+            return;
+        }
+        set_input(ctx, args[0]);
+    } else if cmd == &"out" {
+        if args.len() != 1 {
+            println!("Error: Invalid args: {:?}", args);
+            return;
+        }
+        set_output(ctx, args[0]);
+    } else if cmd == &"analyze_io" {
+        // Perform analysis based on cells marked as input/output
+        analyze_io(&ctx);
+    } else if cmd == &"free_cells" {
+        free_cells(&ctx);
+    } else if cmd == &"u" || cmd == &"used" {
+        if args.len() != 1 {
+            println!("Error: Invalid args: {:?}", args);
+            return;
+        }
+        cell_used(ctx, args[0]);
+    } else if cmd == &"unused_rows" {
+        if args.len() != 2 {
+            println!("Error: Invalid args: {:?}", args);
+            return;
+        }
+        unused_rows(ctx, args[0], args[1]);
     } else if cmd.starts_with("#") {
         return;
     } else {
