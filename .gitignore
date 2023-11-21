@@ -2,3 +2,5 @@
 out
 history.txt
 out.tgz
+params
+data/*

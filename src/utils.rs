@@ -1,7 +1,7 @@
 // use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
 use convert_case::{Case, Casing};
 // use eth_types::geth_types::GethData;
-use halo2_proofs::halo2curves::bn256::Fr;
+use polyexen::halo2_proofs::halo2curves::bn256::Fr;
 // use mock::test_ctx::TestContext;
 use polyexen::plaf::Plaf;
 // use zkevm_circuits::witness::{block_convert, Block};

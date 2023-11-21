@@ -8,14 +8,15 @@ edition = "2021"
 [dependencies]
 num-bigint = { version = "0.4", features = [ "rand" ] }
 num-traits = "0.2"
-polyexen = { path = "../polyexen" }
+polyexen = { path = "../polyexen", default-features = false }
 # zkevm-circuits = { path = "../zkevm-circuits/zkevm-circuits", features = ["test"] }
 # bus-mapping = { path = "../zkevm-circuits/bus-mapping", features = ["test"] }
 # mock = { path = "../zkevm-circuits/mock" }
 # eth-types = { path = "../zkevm-circuits/eth-types" }
-zkevm-hashes = { path = "../halo2-lib/hashes/zkevm", default-features = false, features = ["halo2-pse"] }
+# zkevm-hashes = { path = "../halo2-lib/hashes/zkevm", default-features = false, features = ["halo2-pse"] }
 # halo2_proofs = "0.2"
-halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", features = ["circuit-params"], rev = "d3746109d7d38be53afc8ddae8fdfaf1f02ad1d7" }
+axiom-query = { path = "../axiom-eth-working/axiom-query", default-features = false }
+
 env_logger = "0.9"
 rustyline = "11.0.0"
 convert_case = "0.6.0"
@@ -26,11 +27,28 @@ halo2_proofs = { git = "https://github.com/appliedzkp/halo2.git", rev = "7a21656
 # halo2_proofs = { git = "https://github.com/appliedzkp/halo2.git", rev = "4350bceec26c94a53116feef20eba49fe5f819b5" }
 # halo2_proofs = { git = "https://github.com/kilic/halo2.git", rev = "4350bceec26c94a53116feef20eba49fe5f819b5" }
 
+
 # [patch."https://github.com/privacy-scaling-explorations/halo2wrong.git"]
 # halo2wrong = { path = "../halo2wrong/halo2wrong" }
 
 # [patch.crates-io]
 # halo2_proofs = { path = "../halo2/halo2_proofs" }
 # halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", features = ["circuit-params"], rev = "d3746109d7d38be53afc8ddae8fdfaf1f02ad1d7" }
+# [patch.crates-io]
+# halo2-base = { path = "../halo2-lib/halo2-base" }
+[patch."https://github.com/axiom-crypto/snark-verifier.git"]
+# halo2_proofs = { path = "../halo2/halo2_proofs" }
+snark-verifier = { path = "../snark-verifier/snark-verifier" }
+snark-verifier-sdk = { path = "../snark-verifier/snark-verifier-sdk" }
+[patch."https://github.com/axiom-crypto/halo2.git"]
+# halo2_proofs = { path = "../halo2/halo2_proofs" }
+halo2-axiom = { path = "../halo2-axiom/halo2_proofs" }
+# halo2_proofs = { git = "https://github.com/appliedzkp/halo2.git", rev = "4350bceec26c94a53116feef20eba49fe5f819b5" }
+# halo2_proofs = { git = "https://github.com/kilic/halo2.git", rev = "4350bceec26c94a53116feef20eba49fe5f819b5" }
 [patch.crates-io]
-halo2-base = { path = "../halo2-lib/halo2-base" }
+halo2-axiom = { path = "../halo2-axiom/halo2_proofs" }
+
+[features]
+default = [ "halo2-axiom" ]
+halo2-pse = ["polyexen/halo2-pse", "axiom-query/halo2-pse"]
+halo2-axiom = ["polyexen/halo2-axiom", "axiom-query/halo2-axiom"]

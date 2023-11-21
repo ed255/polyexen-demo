@@ -1,6 +1,5 @@
 #![feature(box_patterns)]
 
-use halo2_proofs::halo2curves::bn256::Fr;
 use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 use polyexen::{
@@ -8,6 +7,7 @@ use polyexen::{
         bound_base, find_bounds_poly, solve_ranged_linear_comb, to_biguint, Analysis, Attrs, Bound,
     },
     expr::{Column, ColumnKind, ColumnQuery, Expr, ExprDisplay, PlonkVar as Var},
+    halo2_proofs::halo2curves::bn256::Fr,
     plaf::{
         frontends::halo2::{gen_witness, get_plaf},
         AliasMap, Cell, CellDisplay, Lookup, Plaf, Poly, Witness,
@@ -40,7 +40,8 @@ use zkevm_circuits::{
     util::SubCircuit,
 };
 */
-use zkevm_hashes::sha256::vanilla::tests::Sha256BitCircuit;
+// use zkevm_hashes::sha256::vanilla::tests::Sha256BitCircuit;
+use axiom_query::verify_compute::tests::verify_compute_test_circuit;
 
 const N_ROWS: usize = 0x50;
 
@@ -402,27 +403,9 @@ fn alias_replace(plaf: &mut Plaf) {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let k: u32 = 8;
+    // let k: u32 = 8;
     // Empty input
-    // let inputs = vec![vec![]];
-    // let inputs = vec![vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66]];
-    // although we have less than 512 bits, due to padding this requires two chunks.
-    // let inputs = vec![(0..62).collect()];
-    // Only 1 word
-    // let inputs = vec![vec![0x11, 0x22, 0x33, 0x44]];
-    // bug1
-    // let inputs = vec![vec![0x01, 0x02, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00]];
-    // let inputs = vec![vec![0x01, 0x02, 0x03, 0x04]];
-    // Only 2 words
-    // let inputs = vec![vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]];
-    // One word and a half
-    // let inputs = vec![vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]];
-    // 16 inputs of 0xff to reach max value of w[16..64]
-    // let inputs = vec![vec![0xff; 16 * 4]];
-    // 5 chunks
-    // let inputs = vec![(0u32..(16 * 4 * 4 - 4)).map(|_| 1u8).collect()];
-    let inputs = vec![vec![1u8; 60]];
-    let circuit = Sha256BitCircuit::<Fr>::new(Some(2usize.pow(k) - 109usize), inputs, false);
+    let (k, circuit) = verify_compute_test_circuit();
     // let block = gen_empty_block();
     // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
     // let circuit = ExpCircuit::<Fr>::new_from_block(&block);
