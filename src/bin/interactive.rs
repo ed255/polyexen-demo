@@ -77,6 +77,8 @@ struct Context {
     alias_map: AliasMap,
     // Map from Cell to Polynomial identity that uses that cell
     cell_expr_map: HashMap<Cell, Vec<PolyRef>>,
+    // Table of Witness Cell to list of copy cells
+    cell_copy_table: Vec<Vec<Vec<Cell>>>,
     // Map from Cell to lookup src expression that uses that cell
     cell_lookup_src_map: HashMap<Cell, Vec<LookupSrcRef>>,
     analysis: RefCell<Analysis<Cell>>,
@@ -99,6 +101,7 @@ impl Context {
             plaf,
             alias_map,
             cell_expr_map: HashMap::new(),
+            cell_copy_table: Vec::new(),
             cell_lookup_src_map: HashMap::new(),
             analysis: RefCell::new(analysis),
             witness,
@@ -106,9 +109,18 @@ impl Context {
             input_set: HashSet::new(),
             output_set: HashSet::new(),
         };
+        log::info!("building cell_copy_table");
+        ctx.cell_copy_table = ctx.cell_copy_table();
+        log::info!("done");
+        log::info!("building cell_expr_map");
         ctx.cell_expr_map = ctx.cell_expr_map();
+        log::info!("done");
+        log::info!("building cell_lookup_src_map");
         ctx.cell_lookup_src_map = ctx.cell_lookup_src_map();
+        log::info!("done");
+        log::info!("analyze_all");
         ctx.analyze_all();
+        log::info!("done");
         ctx
     }
 
@@ -116,13 +128,12 @@ impl Context {
         if let Some(f) = &self.witness.witness[index][offset] {
             return Some(f.clone());
         }
-        if let Some(attrs) = self.analysis.borrow().vars_attrs.get(&Cell {
-            column: Column {
-                kind: ColumnKind::Witness,
-                index,
-            },
-            offset,
-        }) {
+        if let Some(attrs) = self
+            .analysis
+            .borrow()
+            .vars_attrs
+            .get(&Cell::new(Column::new(ColumnKind::Witness, index), offset))
+        {
             if let Some(f) = attrs.bound.unique() {
                 return Some(f.clone());
             }
@@ -137,32 +148,23 @@ impl Context {
                     (offset as i32 + rotation).rem_euclid(self.plaf.info.num_rows as i32) as usize;
                 match column.kind {
                     ColumnKind::Fixed => Expr::Const(to_biguint(
-                        self.plaf.fixed[column.index][offset]
+                        self.plaf.fixed[column.index()][offset]
                             .clone()
                             .unwrap_or_else(BigInt::zero),
                         &self.plaf.info.p,
                     )),
                     ColumnKind::Witness => {
                         if WITNESS {
-                            if let Some(f) = self.resolve_wit(column.index, offset) {
+                            if let Some(f) = self.resolve_wit(column.index(), offset) {
                                 Expr::Const(f.clone())
                             } else {
-                                Expr::Var(Cell {
-                                    column: *column,
-                                    offset,
-                                })
+                                Expr::Var(Cell::new(*column, offset))
                             }
                         } else {
-                            Expr::Var(Cell {
-                                column: *column,
-                                offset,
-                            })
+                            Expr::Var(Cell::new(*column, offset))
                         }
                     }
-                    _ => Expr::Var(Cell {
-                        column: *column,
-                        offset,
-                    }),
+                    _ => Expr::Var(Cell::new(*column, offset)),
                 }
             }
             Var::Challenge { index: _, phase: _ } => {
@@ -187,6 +189,25 @@ impl Context {
             }
         }
         map
+    }
+
+    fn cell_copy_table(&self) -> Vec<Vec<Vec<Cell>>> {
+        let mut table =
+            vec![vec![Vec::new(); self.plaf.info.num_rows]; self.plaf.columns.witness.len()];
+        for copy in &self.plaf.copys {
+            let (column_a, column_b) = copy.columns;
+            for (offset_a, offset_b) in &copy.offsets {
+                if matches!(column_a.kind, ColumnKind::Witness) {
+                    table[column_a.index()][*offset_a].push(Cell::new(column_b, *offset_b));
+                }
+                if column_a != column_b {
+                    if matches!(column_b.kind, ColumnKind::Witness) {
+                        table[column_b.index()][*offset_b].push(Cell::new(column_a, *offset_a));
+                    }
+                }
+            }
+        }
+        table
     }
 
     fn cell_lookup_src_map(&self) -> HashMap<Cell, Vec<LookupSrcRef>> {
@@ -342,7 +363,29 @@ impl Context {
         for lookup in &self.plaf.lookups {
             self.analyze_lookups(lookup);
         }
+        self.analyze_copys();
         // println!("DBG2 {}", self.analysis.borrow().vars_attrs.len());
+    }
+
+    fn analyze_copys(&mut self) {
+        for (column_index, column) in self.cell_copy_table.iter().enumerate() {
+            for (offset, row) in column.iter().enumerate() {
+                let cell = Cell::new(Column::new(ColumnKind::Witness, column_index), offset);
+                for copy in row {
+                    if matches!(copy.column.kind, ColumnKind::Fixed) {
+                        let value = self.plaf.fixed[copy.column.index()][copy.offset()]
+                            .clone()
+                            .unwrap_or_else(|| BigInt::zero());
+                        self.analysis.borrow_mut().vars_attrs.insert(
+                            cell,
+                            Attrs {
+                                bound: Bound::new_unique(to_biguint(value, &self.plaf.info.p)),
+                            },
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn cell_fmt(&self, f: &mut fmt::Formatter<'_>, c: &Cell) -> Result<(), fmt::Error> {
@@ -388,7 +431,7 @@ fn alias_replace(plaf: &mut Plaf) {
     {
         for alias in aliases.iter_mut() {
             // Bytecode
-            *alias = alias.replace("BYTECODE_", "");
+            // *alias = alias.replace("BYTECODE_", "");
 
             // Exp
             // *alias = alias.replace("EXP_", "");
@@ -422,8 +465,8 @@ fn main() {
     alias_replace(&mut plaf);
     plaf.simplify();
     name_challanges(&mut plaf);
-    let witness = Some(gen_witness(k, &circuit, &plaf, vec![], vec![]).unwrap());
-    // let witness = None;
+    // let witness = Some(gen_witness(k, &circuit, &plaf, vec![Fr::from(0x100)], vec![]).unwrap());
+    let witness = None;
     let mut ctx = Context::new(plaf, witness);
     // ctx.analyze();
     // for (cell, attrs) in &analysis.vars_attrs {
@@ -664,8 +707,8 @@ fn print_table(ctx: &Context, offset_str: &str) {
                     }
                     let abs_offset = abs_offset as usize;
                     let query_name: &mut String = match column.kind {
-                        ColumnKind::Fixed => &mut query_names_fixed[column.index][abs_offset],
-                        ColumnKind::Witness => &mut query_names_witness[column.index][abs_offset],
+                        ColumnKind::Fixed => &mut query_names_fixed[column.index()][abs_offset],
+                        ColumnKind::Witness => &mut query_names_witness[column.index()][abs_offset],
                         _ => unimplemented!(),
                     };
                     if query_name.len() == 0 {
@@ -720,13 +763,12 @@ fn print_table(ctx: &Context, offset_str: &str) {
                 row_values.push(Some(format!("{:x}", f)));
                 continue;
             }
-            if let Some(attrs) = ctx.analysis.borrow().vars_attrs.get(&Cell {
-                column: Column {
-                    kind: ColumnKind::Witness,
-                    index,
-                },
-                offset: row,
-            }) {
+            if let Some(attrs) = ctx
+                .analysis
+                .borrow()
+                .vars_attrs
+                .get(&Cell::new(Column::new(ColumnKind::Witness, index), row))
+            {
                 if attrs.bound != ctx.bound_default {
                     row_values.push(Some(format!("{}", attrs.bound)));
                     continue;
@@ -760,10 +802,7 @@ fn get_cell_from_str(ctx: &Context, cell_str: &str) -> Option<Cell> {
                 column,
                 rotation: _,
             }) => {
-                return Some(Cell {
-                    column: column.clone(),
-                    offset,
-                });
+                return Some(Cell::new(column.clone(), offset));
             }
             _ => unreachable!(),
         }
@@ -783,7 +822,7 @@ fn set_witness(ctx: &mut Context, cell_str: &str, val_str: &str) {
     if let Some(cell) = get_cell_from_str(&ctx, cell_str) {
         match cell.column.kind {
             ColumnKind::Witness => {
-                ctx.witness.witness[cell.column.index][cell.offset] = val;
+                ctx.witness.witness[cell.column.index()][cell.offset()] = val;
                 ctx.analyze([cell].into_iter().collect());
             }
             ColumnKind::Public => unimplemented!(),
@@ -814,13 +853,7 @@ fn unused_rows(ctx: &mut Context, from_str: &str, to_str: &str) {
     );
     for column_index in 0..ctx.plaf.columns.witness.len() {
         for offset in from_offset..=to_offset {
-            let cell = Cell {
-                column: Column {
-                    kind: ColumnKind::Witness,
-                    index: column_index,
-                },
-                offset,
-            };
+            let cell = Cell::new(Column::new(ColumnKind::Witness, column_index), offset);
             if let Some(poly_refs) = ctx.cell_expr_map.get(&cell) {
                 for poly_ref in poly_refs {
                     let (poly_offset, poly) = poly_ref.get(&ctx.plaf);
@@ -873,13 +906,7 @@ fn free_cells(ctx: &Context) {
         // Map from (cell) -> [offsets with no constraints]
         let mut cell_poly_map_offsets = HashMap::new();
         for offset in 0..ctx.plaf.info.num_rows {
-            let cell = Cell {
-                column: Column {
-                    kind: ColumnKind::Witness,
-                    index: column_index,
-                },
-                offset,
-            };
+            let cell = Cell::new(Column::new(ColumnKind::Witness, column_index), offset);
             // Skip cells manually set as witness
             if ctx.witness.witness[column_index][offset].is_some() {
                 // println!("DBG set {}", offset);
@@ -957,11 +984,11 @@ fn free_cells(ctx: &Context) {
 }
 
 fn analyze_io(ctx: &Context) {
-    let skip_patterns = [
-        "w bit boolean",
-        "a bit boolean",
-        "e bit boolean",
-        "is_padding boolean",
+    let skip_patterns: [&str; 0] = [
+        // "w bit boolean",
+        // "a bit boolean",
+        // "e bit boolean",
+        // "is_padding boolean",
     ];
 
     println!("# i/o not used in any non-zero constraint:");
@@ -1010,15 +1037,11 @@ fn analyze_io(ctx: &Context) {
     println!("# Non-i/o cells used in only one non-zero constraint:");
     for column_index in 0..ctx.plaf.columns.witness.len() {
         // Map from (cell, poly_ref) -> [offsets with a single constraint]
-        let mut cell_poly_map_offsets = HashMap::new();
+        // We don't use in selector-logic circuits;
+        let mut cell_poly_map_offsets: HashMap<(usize, String), (Vec<usize>, Vec<usize>)> =
+            HashMap::new();
         for offset in 0..ctx.plaf.info.num_rows {
-            let cell = Cell {
-                column: Column {
-                    kind: ColumnKind::Witness,
-                    index: column_index,
-                },
-                offset,
-            };
+            let cell = Cell::new(Column::new(ColumnKind::Witness, column_index), offset);
             // Skip i/o cells
             if ctx.input_set.contains(&cell) || ctx.output_set.contains(&cell) {
                 continue;
@@ -1036,48 +1059,56 @@ fn analyze_io(ctx: &Context) {
                 }
             }
             let mut nonzero_exps = Vec::new();
-            if let Some(poly_refs) = ctx.cell_expr_map.get(&cell) {
-                for poly_ref in poly_refs {
-                    let (poly_offset, poly) = poly_ref.get(&ctx.plaf);
-                    if skip_patterns
-                        .iter()
-                        .any(|skip_pattern| poly.name.contains(skip_pattern))
-                    {
-                        continue;
-                    }
+            let mut copy_list = vec![cell];
+            'outer: while let Some(cell) = copy_list.pop() {
+                if let Some(poly_refs) = ctx.cell_expr_map.get(&cell) {
+                    for poly_ref in poly_refs {
+                        let (poly_offset, poly) = poly_ref.get(&ctx.plaf);
+                        if skip_patterns
+                            .iter()
+                            .any(|skip_pattern| poly.name.contains(skip_pattern))
+                        {
+                            continue;
+                        }
 
-                    let exp = ctx.eval_partial::<true>(&poly.exp, poly_offset);
-                    // Skip whenever the partial evaluated expression doesn't contain the cell
-                    // variable anymore.
-                    if !exp.vars().contains(&cell) {
-                        continue;
+                        let exp = ctx.eval_partial::<true>(&poly.exp, poly_offset);
+                        // Skip whenever the partial evaluated expression doesn't contain the cell
+                        // variable anymore.
+                        if !exp.vars().contains(&cell) {
+                            continue;
+                        }
+                        if !exp.is_zero() {
+                            nonzero_exps.push((poly_offset, poly, exp));
+                        }
+                        if nonzero_exps.len() > 1 {
+                            break 'outer;
+                        }
                     }
-                    if !exp.is_zero() {
-                        nonzero_exps.push((poly_offset, poly, exp));
+                }
+                if matches!(cell.column.kind, ColumnKind::Witness) {
+                    for copy_cell in &ctx.cell_copy_table[cell.column.index()][cell.offset()] {
+                        copy_list.push(*copy_cell);
                     }
                 }
             }
             if nonzero_exps.len() == 1 {
-                // print!(
-                //     "ALERT: non-i/o cell {} only used in one nonzero-constraint: ",
-                //     CellDisplay {
-                //         c: &cell,
-                //         plaf: &ctx.plaf
-                //     }
-                // );
-                let (poly_offset, poly, _exp) = &nonzero_exps[0];
-                // println!(
-                //     "\"{}\"",
-                //     poly.name,
-                //     // ctx.disp_expr_cell(&exp)
-                // );
-                cell_poly_map_offsets
-                    .entry((column_index, poly.name.clone()))
-                    .and_modify(|(offsets, poly_offsets): &mut (Vec<usize>, Vec<usize>)| {
-                        offsets.push(offset);
-                        poly_offsets.push(*poly_offset);
-                    })
-                    .or_insert((vec![offset], vec![*poly_offset]));
+                print!(
+                    "- {} ",
+                    CellDisplay {
+                        c: &cell,
+                        plaf: &ctx.plaf
+                    }
+                );
+                let (poly_offset, poly, exp) = &nonzero_exps[0];
+                println!("\"{}\" {}", poly.name, ctx.disp_expr_cell(&exp));
+                // Disabled for selector-logic circuits
+                // cell_poly_map_offsets
+                //     .entry((column_index, poly.name.clone()))
+                //     .and_modify(|(offsets, poly_offsets): &mut (Vec<usize>, Vec<usize>)| {
+                //         offsets.push(offset);
+                //         poly_offsets.push(*poly_offset);
+                //     })
+                //     .or_insert((vec![offset], vec![*poly_offset]));
             }
         }
         for ((column_index, poly_name), (offsets, poly_offsets)) in cell_poly_map_offsets.iter() {

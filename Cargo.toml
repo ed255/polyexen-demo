@@ -17,6 +17,7 @@ polyexen = { path = "../polyexen", default-features = false }
 # halo2_proofs = "0.2"
 axiom-query = { path = "../axiom-eth-working/axiom-query", default-features = false }
 
+log = "0.4.14"
 env_logger = "0.9"
 rustyline = "11.0.0"
 convert_case = "0.6.0"

@@ -16,7 +16,8 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
 };
-use zkevm_hashes::sha256::vanilla::tests::Sha256BitCircuit;
+// use zkevm_hashes::sha256::vanilla::tests::Sha256BitCircuit;
+use axiom_query::verify_compute::tests::verify_compute_test_circuit;
 // use zkevm_circuits::{
 //     bytecode_circuit::circuit::BytecodeCircuit,
 //     copy_circuit::CopyCircuit,
@@ -173,14 +174,8 @@ fn transform_to_raw_constraints(plaf: &Plaf) {
     for copy in &plaf.copys {
         let (column_a, column_b) = copy.columns;
         for offset in &copy.offsets {
-            let cell_a = Cell {
-                column: column_a,
-                offset: offset.0,
-            };
-            let cell_b = Cell {
-                column: column_b,
-                offset: offset.1,
-            };
+            let cell_a = Cell::new(column_a, offset.0);
+            let cell_b = Cell::new(column_b, offset.1);
             let pointers = var_map.entry(cell_a).or_insert(VarPointers::default());
             pointers.copys.push(raw_copys.len());
             let pointers = var_map.entry(cell_b).or_insert(VarPointers::default());
@@ -327,23 +322,25 @@ fn demo_get_plaf() {
     // gen_circuit_plaf::<ExpCircuit<Fr>>("exp", 10, &block);
     // gen_circuit_plaf::<PiCircuit<Fr>>("pi", 17, &block);
     // gen_circuit_plaf::<SuperCircuit<Fr>>("super", 19, &block);
-    let k: u32 = 10;
-    let inputs = vec![vec![0x61], vec![0x01, 0x02, 0x03]];
-    let circuit = Sha256BitCircuit::<Fr>::new(Some(2usize.pow(k) - 109usize), inputs, false);
+    // let k: u32 = 10;
+    // let inputs = vec![vec![0x61], vec![0x01, 0x02, 0x03]];
+    // let circuit = Sha256BitCircuit::<Fr>::new(Some(2usize.pow(k) - 109usize), inputs, false);
+    let (k, circuit) = verify_compute_test_circuit();
     let mut plaf = get_plaf(k, &circuit).unwrap();
     // name_challanges(&mut plaf);
     // alias_replace(&mut plaf);
     // transform_to_raw_constraints(&plaf);
-    write_files("sha256", &plaf).unwrap();
+    write_files("verify_compute", &plaf).unwrap();
 }
 
 fn demo_analysis() {
     // let block = gen_empty_block();
     // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
     // let k = 9;
-    let k: u32 = 10;
-    let inputs = vec![vec![0x61], vec![0x01, 0x02, 0x03]];
-    let circuit = Sha256BitCircuit::<Fr>::new(Some(2usize.pow(k) - 109usize), inputs, true);
+    // let k: u32 = 10;
+    // let inputs = vec![vec![0x61], vec![0x01, 0x02, 0x03]];
+    // let circuit = Sha256BitCircuit::<Fr>::new(Some(2usize.pow(k) - 109usize), inputs, true);
+    let (k, circuit) = verify_compute_test_circuit();
     let mut plaf = get_plaf(k, &circuit).unwrap();
     plaf.simplify();
     name_challanges(&mut plaf);

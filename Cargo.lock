@@ -716,6 +716,7 @@ dependencies = [
  "axiom-query",
  "convert_case",
  "env_logger 0.9.3",
+ "log",
  "num-bigint",
  "num-traits",
  "polyexen",
