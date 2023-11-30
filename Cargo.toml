@@ -16,6 +16,7 @@ polyexen = { path = "../polyexen", default-features = false }
 # zkevm-hashes = { path = "../halo2-lib/hashes/zkevm", default-features = false, features = ["halo2-pse"] }
 # halo2_proofs = "0.2"
 axiom-query = { path = "../axiom-eth-working/axiom-query", default-features = false }
+axiom-core = { path = "../axiom-eth-working/axiom-core", default-features = false, features = ["revm"] }
 
 log = "0.4.14"
 env_logger = "0.9"
@@ -28,6 +29,10 @@ halo2_proofs = { git = "https://github.com/appliedzkp/halo2.git", rev = "7a21656
 # halo2_proofs = { git = "https://github.com/appliedzkp/halo2.git", rev = "4350bceec26c94a53116feef20eba49fe5f819b5" }
 # halo2_proofs = { git = "https://github.com/kilic/halo2.git", rev = "4350bceec26c94a53116feef20eba49fe5f819b5" }
 
+[patch."https://github.com/axiom-crypto/halo2-lib.git"]
+halo2-base = { path = "../halo2-lib/halo2-base" }
+halo2-ecc = { path = "../halo2-lib/halo2-ecc" }
+zkevm-hashes = { path = "../halo2-lib/hashes/zkevm" }
 
 # [patch."https://github.com/privacy-scaling-explorations/halo2wrong.git"]
 # halo2wrong = { path = "../halo2wrong/halo2wrong" }
@@ -51,5 +56,10 @@ halo2-axiom = { path = "../halo2-axiom/halo2_proofs" }
 
 [features]
 default = [ "halo2-axiom" ]
-halo2-pse = ["polyexen/halo2-pse", "axiom-query/halo2-pse"]
-halo2-axiom = ["polyexen/halo2-axiom", "axiom-query/halo2-axiom"]
+halo2-pse = ["polyexen/halo2-pse", "axiom-query/halo2-pse", "axiom-core/halo2-pse"]
+halo2-axiom = ["polyexen/halo2-axiom", "axiom-query/halo2-axiom", "axiom-core/halo2-axiom"]
+
+[profile.release]
+debug = true
+debug-assertions = true
+overflow-checks = true

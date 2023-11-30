@@ -41,7 +41,12 @@ use zkevm_circuits::{
 };
 */
 // use zkevm_hashes::sha256::vanilla::tests::Sha256BitCircuit;
-use axiom_query::verify_compute::tests::verify_compute_test_circuit;
+use axiom_core::tests::integration::eth_block_header_test_circuit;
+use axiom_query::{
+    components::results::tests::results_root_test_circuit,
+    subquery_aggregation::tests::subquery_agg_test_circuit,
+    verify_compute::tests::verify_compute_test_circuit,
+};
 
 const N_ROWS: usize = 0x50;
 
@@ -66,6 +71,34 @@ struct LookupSrcRef {
     expr_index: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct LookupDstRef {
+    /// Row offset
+    offset: usize,
+    /// Index in Plaf.lookups
+    index: usize,
+    /// Expr Index
+    expr_index: usize,
+}
+
+impl LookupSrcRef {
+    fn get<'a>(&self, plaf: &'a Plaf) -> (usize, &'a Expr<Var>) {
+        (
+            self.offset,
+            &plaf.lookups[self.index].exps.0[self.expr_index],
+        )
+    }
+}
+
+impl LookupDstRef {
+    fn get<'a>(&self, plaf: &'a Plaf) -> (usize, &'a Expr<Var>) {
+        (
+            self.offset,
+            &plaf.lookups[self.index].exps.1[self.expr_index],
+        )
+    }
+}
+
 impl PolyRef {
     fn get<'a>(&self, plaf: &'a Plaf) -> (usize, &'a Poly) {
         (self.offset, &plaf.polys[self.index])
@@ -81,6 +114,8 @@ struct Context {
     cell_copy_table: Vec<Vec<Vec<Cell>>>,
     // Map from Cell to lookup src expression that uses that cell
     cell_lookup_src_map: HashMap<Cell, Vec<LookupSrcRef>>,
+    // Map from Cell to lookup dst expression that uses that cell
+    cell_lookup_dst_map: HashMap<Cell, Vec<LookupDstRef>>,
     analysis: RefCell<Analysis<Cell>>,
     witness: Witness,
     bound_default: Bound,
@@ -88,6 +123,8 @@ struct Context {
     input_set: HashSet<Cell>,
     // Cells defined by the user to be outputs to the circuit
     output_set: HashSet<Cell>,
+    // Set of advice cells indexed by column_index, row_offset marked to be ignored.
+    mark_set: Vec<Vec<bool>>,
 }
 
 impl Context {
@@ -103,12 +140,17 @@ impl Context {
             cell_expr_map: HashMap::new(),
             cell_copy_table: Vec::new(),
             cell_lookup_src_map: HashMap::new(),
+            cell_lookup_dst_map: HashMap::new(),
             analysis: RefCell::new(analysis),
             witness,
             bound_default,
             input_set: HashSet::new(),
             output_set: HashSet::new(),
+            mark_set: Vec::new(),
         };
+        log::info!("loading mark_set");
+        ctx.mark_set = ctx.load_mark_set();
+        log::info!("done");
         log::info!("building cell_copy_table");
         ctx.cell_copy_table = ctx.cell_copy_table();
         log::info!("done");
@@ -118,10 +160,33 @@ impl Context {
         log::info!("building cell_lookup_src_map");
         ctx.cell_lookup_src_map = ctx.cell_lookup_src_map();
         log::info!("done");
+        log::info!("building cell_lookup_dst_map");
+        ctx.cell_lookup_dst_map = ctx.cell_lookup_dst_map();
+        log::info!("done");
         log::info!("analyze_all");
         ctx.analyze_all();
         log::info!("done");
         ctx
+    }
+
+    fn load_mark_set(&self) -> Vec<Vec<bool>> {
+        let f = File::open("/tmp/mark_list.txt").unwrap();
+        let mut mark_set =
+            vec![vec![false; self.plaf.info.num_rows]; self.plaf.columns.witness.len()];
+        let mut reader = BufReader::new(f);
+        let mut buf = String::new();
+        while let Ok(n) = reader.read_line(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            let parts = buf.strip_suffix('\n').unwrap().split(",");
+            let mut numbers = parts.map(|s| usize::from_str_radix(s, 10).unwrap());
+            let column_index = numbers.next().unwrap();
+            let row_offset = numbers.next().unwrap();
+            mark_set[column_index][row_offset] = true;
+            buf.clear();
+        }
+        mark_set
     }
 
     fn resolve_wit(&self, index: usize, offset: usize) -> Option<BigUint> {
@@ -200,13 +265,12 @@ impl Context {
                 if matches!(column_a.kind, ColumnKind::Witness) {
                     table[column_a.index()][*offset_a].push(Cell::new(column_b, *offset_b));
                 }
-                if column_a != column_b {
-                    if matches!(column_b.kind, ColumnKind::Witness) {
-                        table[column_b.index()][*offset_b].push(Cell::new(column_a, *offset_a));
-                    }
+                if matches!(column_b.kind, ColumnKind::Witness) {
+                    table[column_b.index()][*offset_b].push(Cell::new(column_a, *offset_a));
                 }
             }
         }
+        // println!("DBG copy at w00[1806] = {:?}", table[0][1806]);
         table
     }
 
@@ -225,6 +289,29 @@ impl Context {
                     for var in vars {
                         map.entry(var)
                             .and_modify(|ps: &mut Vec<LookupSrcRef>| ps.push(lookup_ref))
+                            .or_insert(vec![lookup_ref]);
+                    }
+                }
+            }
+        }
+        map
+    }
+
+    fn cell_lookup_dst_map(&self) -> HashMap<Cell, Vec<LookupDstRef>> {
+        let mut map = HashMap::new();
+        for offset in 0..self.plaf.info.num_rows {
+            for (index, lookup) in self.plaf.lookups.iter().enumerate() {
+                for (expr_index, expr) in lookup.exps.1.iter().enumerate() {
+                    let exp = self.eval_partial::<false>(&expr, offset);
+                    let vars = exp.vars();
+                    let lookup_ref = LookupDstRef {
+                        offset,
+                        index,
+                        expr_index,
+                    };
+                    for var in vars {
+                        map.entry(var)
+                            .and_modify(|ps: &mut Vec<LookupDstRef>| ps.push(lookup_ref))
                             .or_insert(vec![lookup_ref]);
                     }
                 }
@@ -448,7 +535,19 @@ fn main() {
 
     // let k: u32 = 8;
     // Empty input
-    let (k, circuit) = verify_compute_test_circuit();
+    // let (k, circuit) = verify_compute_test_circuit();
+    // let (k, _, circuit) = results_root_test_circuit();
+    // let sample = eth_block_header_test_circuit("leaf");
+    // let k = sample.k;
+    // let circuit = sample.leaf.unwrap();
+    // let sample = eth_block_header_test_circuit("inter");
+    // let k = sample.k;
+    // let circuit = sample.inter.unwrap().0;
+    // let sample = eth_block_header_test_circuit("root");
+    // let k = sample.k;
+    // let circuit = sample.root.unwrap();
+
+    let (k, instances, circuit) = subquery_agg_test_circuit();
     // let block = gen_empty_block();
     // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
     // let circuit = ExpCircuit::<Fr>::new_from_block(&block);
@@ -1040,10 +1139,14 @@ fn analyze_io(ctx: &Context) {
         // We don't use in selector-logic circuits;
         let mut cell_poly_map_offsets: HashMap<(usize, String), (Vec<usize>, Vec<usize>)> =
             HashMap::new();
-        for offset in 0..ctx.plaf.info.num_rows {
-            let cell = Cell::new(Column::new(ColumnKind::Witness, column_index), offset);
+        'offset_loop: for offset in 0..ctx.plaf.info.num_rows {
+            let analyze_cell = Cell::new(Column::new(ColumnKind::Witness, column_index), offset);
+            // Skip cell in mark_set
+            if ctx.mark_set[column_index][offset] {
+                continue;
+            }
             // Skip i/o cells
-            if ctx.input_set.contains(&cell) || ctx.output_set.contains(&cell) {
+            if ctx.input_set.contains(&analyze_cell) || ctx.output_set.contains(&analyze_cell) {
                 continue;
             }
             // Skip cells manually set as witness
@@ -1051,7 +1154,7 @@ fn analyze_io(ctx: &Context) {
                 continue;
             }
             // Skip cells that have a single possible value after bounds analysis
-            if let Some(attrs) = ctx.analysis.borrow().vars_attrs.get(&cell) {
+            if let Some(attrs) = ctx.analysis.borrow().vars_attrs.get(&analyze_cell) {
                 if attrs.bound != ctx.bound_default {
                     if attrs.bound.unique().is_some() {
                         continue;
@@ -1059,8 +1162,35 @@ fn analyze_io(ctx: &Context) {
                 }
             }
             let mut nonzero_exps = Vec::new();
-            let mut copy_list = vec![cell];
-            'outer: while let Some(cell) = copy_list.pop() {
+            let mut nonzero_src_lookups = Vec::new();
+            let mut nonzero_dst_lookups = Vec::new();
+            let mut copy_list = vec![analyze_cell];
+            // Keep a copy set of visited copy cells to avoid getting stuck in cycles
+            let mut copy_set = HashSet::new();
+
+            copy_set.insert(analyze_cell);
+            'cell_loop: while let Some(cell) = copy_list.pop() {
+                if matches!(cell.column.kind, ColumnKind::Fixed) {
+                    // If the cell is copy constrained to a fixed cell, skip it.
+                    continue 'offset_loop;
+                }
+                if cell != analyze_cell {
+                    // If we have already visited this cell via a previous copy constraint cycle
+                    // and it was not marked, skip it.  With this check we avoid duplicates
+                    // analysis: for example we avoid finding [w00[5], w01[8]] and then [w01[8],
+                    // w00[5]].  But if w00[5] was marked, we would have skipped, so in that case
+                    // we still want to analyze w01[8]
+                    if cell.column.index() < analyze_cell.column.index()
+                        && !ctx.mark_set[cell.column.index()][cell.offset()]
+                    {
+                        continue 'offset_loop;
+                    }
+                    if cell.column.index() == analyze_cell.column.index()
+                        && cell.offset < analyze_cell.offset
+                    {
+                        continue 'offset_loop;
+                    }
+                }
                 if let Some(poly_refs) = ctx.cell_expr_map.get(&cell) {
                     for poly_ref in poly_refs {
                         let (poly_offset, poly) = poly_ref.get(&ctx.plaf);
@@ -1081,26 +1211,66 @@ fn analyze_io(ctx: &Context) {
                             nonzero_exps.push((poly_offset, poly, exp));
                         }
                         if nonzero_exps.len() > 1 {
-                            break 'outer;
+                            break 'cell_loop;
+                        }
+                    }
+                }
+                if let Some(lookup_refs) = ctx.cell_lookup_src_map.get(&cell) {
+                    for lookup_ref in lookup_refs {
+                        let (lookup_offset, lookup_expr) = lookup_ref.get(&ctx.plaf);
+                        let exp = ctx.eval_partial::<true>(&lookup_expr, lookup_offset);
+                        // Skip whenever the partial evaluated expression doesn't contain the cell
+                        // variable anymore.
+                        if !exp.vars().contains(&cell) {
+                            continue;
+                        }
+                        if !exp.is_zero() {
+                            nonzero_src_lookups.push((lookup_offset, lookup_expr, exp));
+                        }
+                    }
+                }
+                if let Some(lookup_refs) = ctx.cell_lookup_dst_map.get(&cell) {
+                    for lookup_ref in lookup_refs {
+                        let (lookup_offset, lookup_expr) = lookup_ref.get(&ctx.plaf);
+                        let exp = ctx.eval_partial::<true>(&lookup_expr, lookup_offset);
+                        // Skip whenever the partial evaluated expression doesn't contain the cell
+                        // variable anymore.
+                        if !exp.vars().contains(&cell) {
+                            continue;
+                        }
+                        if !exp.is_zero() {
+                            nonzero_dst_lookups.push((lookup_offset, lookup_expr, exp));
                         }
                     }
                 }
                 if matches!(cell.column.kind, ColumnKind::Witness) {
                     for copy_cell in &ctx.cell_copy_table[cell.column.index()][cell.offset()] {
-                        copy_list.push(*copy_cell);
+                        if !copy_set.contains(copy_cell) {
+                            copy_set.insert(*copy_cell);
+                            copy_list.push(*copy_cell);
+                        }
                     }
                 }
             }
-            if nonzero_exps.len() == 1 {
-                print!(
-                    "- {} ",
-                    CellDisplay {
-                        c: &cell,
-                        plaf: &ctx.plaf
+            if nonzero_exps.len() == 1
+                && nonzero_src_lookups.len() == 0
+                && nonzero_dst_lookups.len() == 0
+            {
+                print!(" - ");
+                for (i, cell_copy) in copy_set.iter().enumerate() {
+                    if i != 0 {
+                        print!(", ");
                     }
-                );
+                    print!(
+                        "{}",
+                        CellDisplay {
+                            c: &cell_copy,
+                            plaf: &ctx.plaf
+                        }
+                    );
+                }
                 let (poly_offset, poly, exp) = &nonzero_exps[0];
-                println!("\"{}\" {}", poly.name, ctx.disp_expr_cell(&exp));
+                println!(" -> {}", ctx.disp_expr_cell(&exp));
                 // Disabled for selector-logic circuits
                 // cell_poly_map_offsets
                 //     .entry((column_index, poly.name.clone()))
@@ -1216,6 +1386,9 @@ fn run(ctx: &mut Context, line: &str) {
             return;
         }
         unused_rows(ctx, args[0], args[1]);
+    } else if cmd == &"exit" {
+        // TODO: Remove this ugly hack and propagate an exit signal properly
+        panic!("exit");
     } else if cmd.starts_with("#") {
         return;
     } else {

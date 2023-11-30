@@ -1,6 +1,11 @@
 // use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
 // use eth_types::{bytecode, geth_types::GethData, ToWord, Word};
-use polyexen::halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr, plonk::Circuit};
+use num_bigint::BigInt;
+use num_traits::identities::Zero;
+use polyexen::{
+    expr::ColumnKind,
+    halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr, plonk::Circuit},
+};
 // use mock::test_ctx::TestContext;
 use num_bigint::BigUint;
 use polyexen::{
@@ -17,7 +22,12 @@ use std::{
     fmt,
 };
 // use zkevm_hashes::sha256::vanilla::tests::Sha256BitCircuit;
-use axiom_query::verify_compute::tests::verify_compute_test_circuit;
+use axiom_core::tests::integration::eth_block_header_test_circuit;
+use axiom_query::{
+    components::results::tests::results_root_test_circuit,
+    subquery_aggregation::tests::subquery_agg_test_circuit,
+    verify_compute::tests::verify_compute_test_circuit,
+};
 // use zkevm_circuits::{
 //     bytecode_circuit::circuit::BytecodeCircuit,
 //     copy_circuit::CopyCircuit,
@@ -93,9 +103,10 @@ fn transform_to_raw_constraints(plaf: &Plaf) {
     // BEGIN RAW CONSTRAINTS
     let cell_fmt =
         |f: &mut fmt::Formatter<'_>, c: &Cell| write!(f, "{}", CellDisplay { c, plaf: &plaf });
-    let mut var_map: HashMap<_, VarPointers> = HashMap::new();
-    let mut raw_polys = Vec::new();
+    // let mut var_map: HashMap<_, VarPointers> = HashMap::new();
+    // let mut raw_polys = Vec::new();
     // for offset in 0..16 {
+    println!("# Arithmetic constraints\n");
     for offset in 0..plaf.info.num_rows {
         for poly in &plaf.polys {
             let mut exp = plaf.resolve(&poly.exp, offset);
@@ -103,22 +114,22 @@ fn transform_to_raw_constraints(plaf: &Plaf) {
             if exp.is_zero() {
                 continue;
             }
-            for var in exp.vars() {
-                let pointers = var_map.entry(var).or_insert(VarPointers::default());
-                pointers.polys.push(raw_polys.len());
-            }
-            raw_polys.push(exp);
-            // println!(
-            //     "{} = 0 # {}",
-            //     ExprDisplay {
-            //         e: &exp,
-            //         var_fmt: cell_fmt
-            //     },
-            //     poly.name,
-            // );
+            // for var in exp.vars() {
+            //     let pointers = var_map.entry(var).or_insert(VarPointers::default());
+            //     pointers.polys.push(raw_polys.len());
+            // }
+            // raw_polys.push(exp);
+            println!(
+                "{}",
+                ExprDisplay {
+                    e: &exp,
+                    var_fmt: cell_fmt
+                },
+            );
         }
     }
-    let mut raw_lookups = Vec::new();
+    // let mut raw_lookups = Vec::new();
+    println!("\n# Lookups\n");
     for offset in 0..plaf.info.num_rows {
         for (lookup_num, lookup) in plaf.lookups.iter().enumerate() {
             let Lookup { name, exps } = lookup;
@@ -134,65 +145,84 @@ fn transform_to_raw_constraints(plaf: &Plaf) {
             if exps_lhs.iter().all(|exp| exp.is_zero()) {
                 continue;
             }
-            for exp in &exps_lhs {
-                for var in exp.vars() {
-                    let pointers = var_map.entry(var).or_insert(VarPointers::default());
-                    pointers.lookups.push(raw_lookups.len());
+            // for exp in &exps_lhs {
+            //     for var in exp.vars() {
+            //         let pointers = var_map.entry(var).or_insert(VarPointers::default());
+            //         pointers.lookups.push(raw_lookups.len());
+            //     }
+            // }
+            // raw_lookups.push((exps_lhs, lookup_num));
+            print!("[");
+            for (i, exp) in exps_lhs.iter().enumerate() {
+                if i != 0 {
+                    print!(", ")
                 }
+                print!(
+                    "{}",
+                    ExprDisplay {
+                        e: &exp,
+                        var_fmt: cell_fmt
+                    },
+                );
             }
-            raw_lookups.push((exps_lhs, lookup_num));
-            // print!("[");
-            // for (i, exp) in exps_lhs.iter().enumerate() {
-            //     if i != 0 {
-            //         print!(", ")
-            //     }
-            //     print!(
-            //         "{}",
-            //         ExprDisplay {
-            //             e: &exp,
-            //             var_fmt: cell_fmt
-            //         },
-            //     );
-            // }
-            // print!("] in [");
-            // for (i, exp) in exps.1.iter().enumerate() {
-            //     if i != 0 {
-            //         print!(", ")
-            //     }
-            //     print!(
-            //         "{}",
-            //         ExprDisplay {
-            //             e: &exp,
-            //             var_fmt: |f, v| plaf.fmt_var(f, v)
-            //         },
-            //     );
-            // }
-            // println!("] # {}", name);
+            print!("] in [");
+            for (i, exp) in exps.1.iter().enumerate() {
+                if i != 0 {
+                    print!(", ")
+                }
+                print!(
+                    "{}",
+                    ExprDisplay {
+                        e: &exp,
+                        var_fmt: |f, v| plaf.fmt_var(f, v)
+                    },
+                );
+            }
+            println!("]");
         }
     }
-    let mut raw_copys = Vec::new();
+    println!("\n# Copy constraints\n");
+    // let mut raw_copys = Vec::new();
+    let zero = BigInt::zero();
     for copy in &plaf.copys {
         let (column_a, column_b) = copy.columns;
         for offset in &copy.offsets {
             let cell_a = Cell::new(column_a, offset.0);
             let cell_b = Cell::new(column_b, offset.1);
-            let pointers = var_map.entry(cell_a).or_insert(VarPointers::default());
-            pointers.copys.push(raw_copys.len());
-            let pointers = var_map.entry(cell_b).or_insert(VarPointers::default());
-            pointers.copys.push(raw_copys.len());
-            raw_copys.push((cell_a, cell_b));
+            // let pointers = var_map.entry(cell_a).or_insert(VarPointers::default());
+            // pointers.copys.push(raw_copys.len());
+            // let pointers = var_map.entry(cell_b).or_insert(VarPointers::default());
+            // pointers.copys.push(raw_copys.len());
+            // raw_copys.push((cell_a, cell_b));
 
-            // println!(
-            //     "{} - {}",
-            //     CellDisplay {
-            //         c: &cell_a,
-            //         plaf: &plaf
-            //     },
-            //     CellDisplay {
-            //         c: &cell_b,
-            //         plaf: &plaf
-            //     }
-            // );
+            print!(
+                "{} = {}",
+                CellDisplay {
+                    c: &cell_a,
+                    plaf: &plaf
+                },
+                CellDisplay {
+                    c: &cell_b,
+                    plaf: &plaf
+                }
+            );
+            let fixed = if matches!(column_a.kind, ColumnKind::Fixed) {
+                Some((column_a, offset.0))
+            } else if matches!(column_b.kind, ColumnKind::Fixed) {
+                Some((column_b, offset.1))
+            } else {
+                None
+            };
+            if let Some((column, offset)) = fixed {
+                println!(
+                    " = {}",
+                    plaf.fixed[column.index()][offset]
+                        .as_ref()
+                        .unwrap_or_else(|| &zero)
+                );
+            } else {
+                println!("");
+            }
         }
     }
     // for (var, pointers) in var_map.iter() {
@@ -206,54 +236,54 @@ fn transform_to_raw_constraints(plaf: &Plaf) {
     //     println!("{:?}", pointers);
     // }
     // Collect copy sets (sets of cells that are constrained to be the same value)
-    let mut copy_sets = Vec::new();
-    let mut cleared = HashSet::new();
-    let mut dup_vars_count = 0;
-    for (index, (cell_main, cell_b)) in raw_copys.iter().enumerate() {
-        if cleared.contains(&index) {
-            continue;
-        }
-        cleared.insert(index);
-        let mut next = vec![*cell_b];
-        let mut copy_set = HashSet::new();
-        while let Some(cell) = next.pop() {
-            if cell == *cell_main {
-                continue;
-            }
-            copy_set.insert(cell);
-            if let Some(pointers) = var_map.get(&cell) {
-                for copy_index in &pointers.copys {
-                    if cleared.contains(copy_index) {
-                        continue;
-                    }
-                    cleared.insert(*copy_index);
-                    let (cell_a, cell_b) = raw_copys[*copy_index];
-                    next.push(cell_a);
-                    next.push(cell_b);
-                }
-            }
-        }
-        dup_vars_count += copy_set.len();
-        copy_sets.push((cell_main, copy_set));
-    }
-    println!("dup_vars_count={}", dup_vars_count);
-    // Apply copy constraint replacements
-    for (cell_main, copy_set) in &copy_sets {
-        for cell in copy_set {
-            if let Some(pointers) = var_map.get(cell) {
-                for poly_index in &pointers.polys {
-                    let poly = raw_polys.get_mut(*poly_index).unwrap();
-                    poly.replace_var(cell, &Expr::Var(**cell_main));
-                }
-                for lookup_index in &pointers.lookups {
-                    let lookup = raw_lookups.get_mut(*lookup_index).unwrap();
-                    for exp in lookup.0.iter_mut() {
-                        exp.replace_var(cell, &Expr::Var(**cell_main));
-                    }
-                }
-            }
-        }
-    }
+    // let mut copy_sets = Vec::new();
+    // let mut cleared = HashSet::new();
+    // let mut dup_vars_count = 0;
+    // for (index, (cell_main, cell_b)) in raw_copys.iter().enumerate() {
+    //     if cleared.contains(&index) {
+    //         continue;
+    //     }
+    //     cleared.insert(index);
+    //     let mut next = vec![*cell_b];
+    //     let mut copy_set = HashSet::new();
+    //     while let Some(cell) = next.pop() {
+    //         if cell == *cell_main {
+    //             continue;
+    //         }
+    //         copy_set.insert(cell);
+    //         if let Some(pointers) = var_map.get(&cell) {
+    //             for copy_index in &pointers.copys {
+    //                 if cleared.contains(copy_index) {
+    //                     continue;
+    //                 }
+    //                 cleared.insert(*copy_index);
+    //                 let (cell_a, cell_b) = raw_copys[*copy_index];
+    //                 next.push(cell_a);
+    //                 next.push(cell_b);
+    //             }
+    //         }
+    //     }
+    //     dup_vars_count += copy_set.len();
+    //     copy_sets.push((cell_main, copy_set));
+    // }
+    // println!("dup_vars_count={}", dup_vars_count);
+    // // Apply copy constraint replacements
+    // for (cell_main, copy_set) in &copy_sets {
+    //     for cell in copy_set {
+    //         if let Some(pointers) = var_map.get(cell) {
+    //             for poly_index in &pointers.polys {
+    //                 let poly = raw_polys.get_mut(*poly_index).unwrap();
+    //                 poly.replace_var(cell, &Expr::Var(**cell_main));
+    //             }
+    //             for lookup_index in &pointers.lookups {
+    //                 let lookup = raw_lookups.get_mut(*lookup_index).unwrap();
+    //                 for exp in lookup.0.iter_mut() {
+    //                     exp.replace_var(cell, &Expr::Var(**cell_main));
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
     /*
     for copy in &copy_sets {
         print!(
@@ -325,12 +355,29 @@ fn demo_get_plaf() {
     // let k: u32 = 10;
     // let inputs = vec![vec![0x61], vec![0x01, 0x02, 0x03]];
     // let circuit = Sha256BitCircuit::<Fr>::new(Some(2usize.pow(k) - 109usize), inputs, false);
-    let (k, circuit) = verify_compute_test_circuit();
+    // let (k, circuit) = verify_compute_test_circuit();
+    // let (k, _, circuit) = results_root_test_circuit();
+    let sample = eth_block_header_test_circuit("inter");
+    let k = sample.k;
+    let circuit = sample.inter.unwrap().0;
+    // let (k, _, circuit) = subquery_agg_test_circuit();
     let mut plaf = get_plaf(k, &circuit).unwrap();
     // name_challanges(&mut plaf);
     // alias_replace(&mut plaf);
     // transform_to_raw_constraints(&plaf);
-    write_files("verify_compute", &plaf).unwrap();
+    // write_files("subquery_agg", &plaf).unwrap();
+    write_files("eth_block_header_inter", &plaf).unwrap();
+
+    let sample = eth_block_header_test_circuit("root");
+    let k = sample.k;
+    let circuit = sample.root.unwrap();
+    // let (k, _, circuit) = subquery_agg_test_circuit();
+    let mut plaf = get_plaf(k, &circuit).unwrap();
+    // name_challanges(&mut plaf);
+    // alias_replace(&mut plaf);
+    // transform_to_raw_constraints(&plaf);
+    // write_files("subquery_agg", &plaf).unwrap();
+    write_files("eth_block_header_root", &plaf).unwrap();
 }
 
 fn demo_analysis() {

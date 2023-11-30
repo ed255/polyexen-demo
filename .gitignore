@@ -4,3 +4,7 @@ history.txt
 out.tgz
 params
 data/*
+*.txt
+configs
+scratch
+data
