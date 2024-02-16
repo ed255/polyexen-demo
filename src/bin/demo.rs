@@ -22,10 +22,11 @@ use std::{
     fmt,
 };
 // use zkevm_hashes::sha256::vanilla::tests::Sha256BitCircuit;
-use axiom_core::tests::integration::eth_block_header_test_circuit;
+use axiom_client::tests::keccak::all_subquery_test_circuit;
+// use axiom_core::tests::integration::eth_block_header_test_circuit;
 use axiom_query::{
     components::results::tests::results_root_test_circuit,
-    subquery_aggregation::tests::subquery_agg_test_circuit,
+    // subquery_aggregation::tests::subquery_agg_test_circuit,
     verify_compute::tests::verify_compute_test_circuit,
 };
 // use zkevm_circuits::{
@@ -357,27 +358,17 @@ fn demo_get_plaf() {
     // let circuit = Sha256BitCircuit::<Fr>::new(Some(2usize.pow(k) - 109usize), inputs, false);
     // let (k, circuit) = verify_compute_test_circuit();
     // let (k, _, circuit) = results_root_test_circuit();
-    let sample = eth_block_header_test_circuit("inter");
-    let k = sample.k;
-    let circuit = sample.inter.unwrap().0;
+    // let sample = eth_block_header_test_circuit("inter");
+    // let k = sample.k;
+    // let circuit = sample.inter.unwrap().0;
     // let (k, _, circuit) = subquery_agg_test_circuit();
+    let (k, circuit) = all_subquery_test_circuit();
     let mut plaf = get_plaf(k, &circuit).unwrap();
     // name_challanges(&mut plaf);
     // alias_replace(&mut plaf);
-    // transform_to_raw_constraints(&plaf);
+    transform_to_raw_constraints(&plaf);
     // write_files("subquery_agg", &plaf).unwrap();
-    write_files("eth_block_header_inter", &plaf).unwrap();
-
-    let sample = eth_block_header_test_circuit("root");
-    let k = sample.k;
-    let circuit = sample.root.unwrap();
-    // let (k, _, circuit) = subquery_agg_test_circuit();
-    let mut plaf = get_plaf(k, &circuit).unwrap();
-    // name_challanges(&mut plaf);
-    // alias_replace(&mut plaf);
-    // transform_to_raw_constraints(&plaf);
-    // write_files("subquery_agg", &plaf).unwrap();
-    write_files("eth_block_header_root", &plaf).unwrap();
+    // write_files("all_subquery", &plaf).unwrap();
 }
 
 fn demo_analysis() {

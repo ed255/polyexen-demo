@@ -17,6 +17,7 @@ polyexen = { path = "../polyexen", default-features = false }
 # halo2_proofs = "0.2"
 axiom-query = { path = "../axiom-eth-working/axiom-query", default-features = false }
 axiom-core = { path = "../axiom-eth-working/axiom-core", default-features = false, features = ["revm"] }
+axiom-client = { path = "../axiom-sdk-client/rust" }
 
 log = "0.4.14"
 env_logger = "0.9"

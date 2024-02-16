@@ -41,11 +41,19 @@ use zkevm_circuits::{
 };
 */
 // use zkevm_hashes::sha256::vanilla::tests::Sha256BitCircuit;
-use axiom_core::tests::integration::eth_block_header_test_circuit;
+// use axiom_core::tests::integration::eth_block_header_test_circuit;
+// use axiom_query::{
+//     components::results::tests::results_root_test_circuit,
+//     subquery_aggregation::tests::subquery_agg_test_circuit,
+//     verify_compute::tests::test_verify_no_compute_circuit,
+// };
+use axiom_client::tests::keccak::all_subquery_test_circuit;
 use axiom_query::{
     components::results::tests::results_root_test_circuit,
-    subquery_aggregation::tests::subquery_agg_test_circuit,
-    verify_compute::tests::verify_compute_test_circuit,
+    verify_compute::tests::{
+        aggregation::verify_compute_agg_test_circuit, verify_compute_test_circuit,
+        verify_no_compute_test_circuit,
+    },
 };
 
 const N_ROWS: usize = 0x50;
@@ -535,8 +543,11 @@ fn main() {
 
     // let k: u32 = 8;
     // Empty input
+    // let (k, circuit) = verify_no_compute_test_circuit();
     // let (k, circuit) = verify_compute_test_circuit();
+    // let (k, circuit) = verify_compute_agg_test_circuit();
     // let (k, _, circuit) = results_root_test_circuit();
+    let (k, circuit) = all_subquery_test_circuit();
     // let sample = eth_block_header_test_circuit("leaf");
     // let k = sample.k;
     // let circuit = sample.leaf.unwrap();
@@ -547,7 +558,7 @@ fn main() {
     // let k = sample.k;
     // let circuit = sample.root.unwrap();
 
-    let (k, instances, circuit) = subquery_agg_test_circuit();
+    // let (k, instances, circuit) = subquery_agg_test_circuit();
     // let block = gen_empty_block();
     // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
     // let circuit = ExpCircuit::<Fr>::new_from_block(&block);
@@ -1134,6 +1145,13 @@ fn analyze_io(ctx: &Context) {
     }
 
     println!("# Non-i/o cells used in only one non-zero constraint:");
+    let is_marked = |cell: &Cell| {
+        if matches!(cell.column.kind, ColumnKind::Public) {
+            false
+        } else {
+            ctx.mark_set[cell.column.index()][cell.offset()]
+        }
+    };
     for column_index in 0..ctx.plaf.columns.witness.len() {
         // Map from (cell, poly_ref) -> [offsets with a single constraint]
         // We don't use in selector-logic circuits;
@@ -1161,7 +1179,8 @@ fn analyze_io(ctx: &Context) {
                     }
                 }
             }
-            let mut nonzero_exps = Vec::new();
+            let mut unmarked_nonzero_exps = Vec::new();
+            let mut marked_nonzero_exps = Vec::new();
             let mut nonzero_src_lookups = Vec::new();
             let mut nonzero_dst_lookups = Vec::new();
             let mut copy_list = vec![analyze_cell];
@@ -1174,15 +1193,14 @@ fn analyze_io(ctx: &Context) {
                     // If the cell is copy constrained to a fixed cell, skip it.
                     continue 'offset_loop;
                 }
+                let marked = is_marked(&cell);
                 if cell != analyze_cell {
                     // If we have already visited this cell via a previous copy constraint cycle
                     // and it was not marked, skip it.  With this check we avoid duplicates
                     // analysis: for example we avoid finding [w00[5], w01[8]] and then [w01[8],
                     // w00[5]].  But if w00[5] was marked, we would have skipped, so in that case
                     // we still want to analyze w01[8]
-                    if cell.column.index() < analyze_cell.column.index()
-                        && !ctx.mark_set[cell.column.index()][cell.offset()]
-                    {
+                    if cell.column.index() < analyze_cell.column.index() && !marked {
                         continue 'offset_loop;
                     }
                     if cell.column.index() == analyze_cell.column.index()
@@ -1208,9 +1226,13 @@ fn analyze_io(ctx: &Context) {
                             continue;
                         }
                         if !exp.is_zero() {
-                            nonzero_exps.push((poly_offset, poly, exp));
+                            if marked {
+                                marked_nonzero_exps.push((poly_offset, poly, exp));
+                            } else {
+                                unmarked_nonzero_exps.push((poly_offset, poly, exp));
+                            }
                         }
-                        if nonzero_exps.len() > 1 {
+                        if unmarked_nonzero_exps.len() > 1 {
                             break 'cell_loop;
                         }
                     }
@@ -1252,14 +1274,19 @@ fn analyze_io(ctx: &Context) {
                     }
                 }
             }
-            if nonzero_exps.len() == 1
+            if ((unmarked_nonzero_exps.len() + marked_nonzero_exps.len() == 1)
+                || (unmarked_nonzero_exps.len() == 0 && marked_nonzero_exps.len() > 0))
                 && nonzero_src_lookups.len() == 0
                 && nonzero_dst_lookups.len() == 0
             {
                 print!(" - ");
                 for (i, cell_copy) in copy_set.iter().enumerate() {
+                    let marked = is_marked(&cell_copy);
                     if i != 0 {
                         print!(", ");
+                    }
+                    if marked {
+                        print!("*");
                     }
                     print!(
                         "{}",
@@ -1269,8 +1296,20 @@ fn analyze_io(ctx: &Context) {
                         }
                     );
                 }
-                let (poly_offset, poly, exp) = &nonzero_exps[0];
-                println!(" -> {}", ctx.disp_expr_cell(&exp));
+                if unmarked_nonzero_exps.len() == 1 {
+                    let (poly_offset, poly, exp) = &unmarked_nonzero_exps[0];
+                    println!(" -> {}", ctx.disp_expr_cell(&exp));
+                } else if unmarked_nonzero_exps.len() == 0 {
+                    let (poly_offset, poly, exp) = &marked_nonzero_exps[0];
+                    print!(" -> {}", ctx.disp_expr_cell(&exp));
+                    if marked_nonzero_exps.len() == 1 {
+                        println!(" (marked single!)");
+                    } else {
+                        println!(", ... (marked multi)");
+                    }
+                } else {
+                    unreachable!();
+                }
                 // Disabled for selector-logic circuits
                 // cell_poly_map_offsets
                 //     .entry((column_index, poly.name.clone()))
