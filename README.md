@@ -5,11 +5,11 @@ This is a demo of Plaf: Plonkish Arithmetiation Format on the zkevm-circuits
 
 Steps to run this:
 - 1. Clone these three repositories in the same folder:
-    - https://github.com/ed255/halo2 (Make sure you're at `feature/wip-polyexen` branch)
-    - https://github.com/ed255/zkevm-circuits (Make sure you're at `feature/wip-polyexen` branch)
-    - https://github.com/ed255/halo2wrong (Make sure you're at `feature/wip-polyexen` branch)
-    - https://github.com/ed255/polyexen-demo
-    - https://github.com/Dhole/polyexen
+    - https://github.com/ed255/halo2 (Checkout `9d5c76e606c5bebb61c4cc22d3bf065b364f971d`)
+    - https://github.com/ed255/zkevm-circuits (Checkout `344bbcd6a19314dc500dd2aa10f44ebdce723aec`)
+    - https://github.com/ed255/halo2wrong (Checkout `0823e711de5c1b79a906f7aa1dd3b8686b6501ca`)
+    - https://github.com/ed255/polyexen-demo (Checkout `17f5c37125cb46f53e44a14e1789afbaa485845c`)
+    - https://github.com/Dhole/polyexen (Checkout `fc747aab032125fba2f8415405fe84fc43bd9e61`)
 - 2. Enter the `polyexen-demo` directory and run it:
     - `git checkout 2023-03-15`
     - `mkdir -p out`
